@@ -44,3 +44,7 @@ By keeping cue creation in the hands of families, overlays remain lawful, person
 
 ## Call to Action
 This repo begins as a vision. Developers, designers, and families are invited to collaborate, fork, and build. Together we can normalize overlays as a standard playback feature — resilient, lawful, and family‑owned.
+
+
+- [FAQ](FAQ.md)
+- [Roadmap](ROADMAP.md)
