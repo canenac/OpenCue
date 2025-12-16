@@ -1,0 +1,25 @@
+# Frequently Asked Questions
+
+### Is this legal?
+Yes. The Family Movie Act of 2005 protects personal playback filtering when no fixed copy is created. This project is about lawful, user‑directed overlays.
+
+### Why not just use existing services?
+Proprietary platforms remain vulnerable to hostile litigation and licensing constraints. Studios have historically used tactics such as preemptive lawsuits, injunctions, and venue shopping to suppress lawful filtering companies. Families lose access when those services are forced to shut down. 
+
+Open source is different. By decentralizing overlays, there is no single company to target. Families own their playback tools, and resilience is built into the community itself. This path avoids dependency on licensing deals and ensures continuity regardless of industry pressures.
+
+### Does this replace streaming platforms?
+No. Overlays are additive, like captions or parental controls. They enhance playback without altering or redistributing the underlying media.
+
+### Can I get sued for using overlays?
+No. Personal use filtering is lawful. Litigation has historically targeted companies distributing filtering services, not families using lawful personal playback tools. By keeping cue creation and playback in the hands of users, this project avoids those risks.
+
+### Where do cue files come from?
+Families can create their own cue files using simple tools:
+- Cue editors for marking skip/mute points.  
+- Log generators for recording playback events.  
+- GUI builders for drag‑and‑drop customization.  
+- Community templates for lawful, reusable examples.
+
+### Why is open source the optimal path for families?
+Because it is resilient. Proprietary services can be shut down by lawsuits or licensing withdrawals. Open source cannot. Families deserve tools that endure beyond industry dynamics, and only community‑driven, lawful overlays provide that assurance. 
