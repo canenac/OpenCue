@@ -416,3 +416,10 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Ignore Word drafts
+*.docx
+
+# Ignore editor temp files
+*.swp
+*.log
