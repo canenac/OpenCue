@@ -1,0 +1,76 @@
+{
+  "version": "1.0",
+  "description": "OpenCue profanity word list for overlay detection",
+  "categories": {
+    "profanity": {
+      "severe": [
+        {"word": "fuck", "display": "f**k", "variants": ["fucking", "fucked", "fucker", "fuckers", "fucks", "motherfucker", "motherfucking"]},
+        {"word": "shit", "display": "sh*t", "variants": ["shitting", "shitty", "shits", "bullshit", "horseshit"]},
+        {"word": "cunt", "display": "c**t", "variants": ["cunts"]},
+        {"word": "cock", "display": "c**k", "variants": ["cocks", "cocksucker"]},
+        {"word": "dick", "display": "d**k", "variants": ["dicks", "dickhead"]},
+        {"word": "pussy", "display": "p***y", "variants": ["pussies"]},
+        {"word": "bitch", "display": "b***h", "variants": ["bitches", "bitchy", "bitching"]},
+        {"word": "bastard", "display": "ba****d", "variants": ["bastards"]},
+        {"word": "asshole", "display": "a*****e", "variants": ["assholes"]},
+        {"word": "whore", "display": "wh**e", "variants": ["whores"]}
+      ],
+      "moderate": [
+        {"word": "damn", "display": "da*n", "variants": ["damned", "dammit", "goddamn", "goddammit"]},
+        {"word": "hell", "display": "he*l", "variants": ["hellish"]},
+        {"word": "ass", "display": "a*s", "variants": ["asses", "dumbass", "jackass", "badass"]},
+        {"word": "crap", "display": "cr*p", "variants": ["crappy", "crapping"]},
+        {"word": "piss", "display": "pi*s", "variants": ["pissed", "pissing"]},
+        {"word": "suck", "display": "su*k", "variants": ["sucks", "sucked", "sucking"]},
+        {"word": "screw", "display": "sc**w", "variants": ["screwed", "screwing"]}
+      ],
+      "mild": [
+        {"word": "butt", "display": "bu*t", "variants": ["butts"]},
+        {"word": "fart", "display": "fa*t", "variants": ["farts", "farting", "farted"]},
+        {"word": "boob", "display": "bo*b", "variants": ["boobs"]},
+        {"word": "idiot", "display": "id**t", "variants": ["idiots", "idiotic"]},
+        {"word": "stupid", "display": "st***d", "variants": []},
+        {"word": "moron", "display": "mo**n", "variants": ["morons", "moronic"]},
+        {"word": "jerk", "display": "je*k", "variants": ["jerks"]}
+      ]
+    },
+    "blasphemy": {
+      "exclamatory": [
+        {"word": "god", "display": "G*d", "variants": ["goddamn", "goddammit"], "context_required": true},
+        {"word": "jesus", "display": "Je**s", "variants": ["jesus christ"], "context_required": true},
+        {"word": "christ", "display": "Chr**t", "variants": [], "context_required": true}
+      ]
+    },
+    "slurs": {
+      "racial": [
+        {"word": "nigger", "display": "n****r", "variants": ["niggers", "nigga", "niggas"]},
+        {"word": "spic", "display": "sp*c", "variants": ["spics"]},
+        {"word": "chink", "display": "ch**k", "variants": ["chinks"]},
+        {"word": "wetback", "display": "we****k", "variants": ["wetbacks"]},
+        {"word": "kike", "display": "k**e", "variants": ["kikes"]},
+        {"word": "gook", "display": "go*k", "variants": ["gooks"]}
+      ],
+      "homophobic": [
+        {"word": "fag", "display": "f*g", "variants": ["fags", "faggot", "faggots"]},
+        {"word": "dyke", "display": "dy*e", "variants": ["dykes"]}
+      ],
+      "other": [
+        {"word": "retard", "display": "re***d", "variants": ["retards", "retarded"]}
+      ]
+    },
+    "sexual": {
+      "explicit": [
+        {"word": "blowjob", "display": "bl****b", "variants": ["blowjobs", "blow job"]},
+        {"word": "handjob", "display": "ha****b", "variants": ["handjobs", "hand job"]},
+        {"word": "dildo", "display": "di**o", "variants": ["dildos"]},
+        {"word": "orgasm", "display": "or***m", "variants": ["orgasms", "orgasmic"]},
+        {"word": "masturbate", "display": "mas*****te", "variants": ["masturbating", "masturbation"]}
+      ],
+      "suggestive": [
+        {"word": "horny", "display": "ho**y", "variants": []},
+        {"word": "erection", "display": "er****on", "variants": ["erections"]},
+        {"word": "boner", "display": "bo**r", "variants": ["boners"]}
+      ]
+    }
+  }
+}

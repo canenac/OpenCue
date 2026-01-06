@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenCue Dashboard</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <div class="header-content">
+        <h1>OpenCue</h1>
+        <p class="tagline">Cue-based Playback Overlays</p>
+      </div>
+      <div class="status-badge" id="status-badge">
+        <span class="status-dot"></span>
+        <span class="status-text">Checking...</span>
+      </div>
+    </header>
+
+    <main class="main">
+      <section class="card">
+        <h2>Connection Status</h2>
+        <div class="stats-grid">
+          <div class="stat">
+            <span class="stat-value" id="ws-connections">0</span>
+            <span class="stat-label">Extension Connections</span>
+          </div>
+          <div class="stat">
+            <span class="stat-value" id="events-count">0</span>
+            <span class="stat-label">Overlay Events</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Recent Overlay Events</h2>
+        <div class="controls">
+          <button id="refresh-btn" class="btn btn-secondary">Refresh</button>
+          <button id="clear-btn" class="btn btn-secondary">Clear</button>
+        </div>
+        <div class="events-list" id="events-list">
+          <p class="empty-state">No events yet. Start watching something on Netflix with the extension active.</p>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Quick Start</h2>
+        <ol class="instructions">
+          <li>Install the OpenCue Firefox extension</li>
+          <li>Click the extension icon and ensure it shows "Connected"</li>
+          <li>Navigate to Netflix and start watching content with subtitles enabled</li>
+          <li>Profanity will be automatically muted based on subtitle analysis</li>
+        </ol>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>OpenCue v0.1.0 | Backend: localhost:8080 | WebSocket: localhost:8765</p>
+      <p><a href="https://github.com/canenac/OpenCue" target="_blank">GitHub</a></p>
+    </footer>
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenCue</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>OpenCue</h1>
+      <p class="tagline">Cue-based playback overlays</p>
+    </header>
+
+    <section class="status">
+      <div class="status-indicator">
+        <span id="status-dot" class="dot disconnected"></span>
+        <span id="status-text">Disconnected</span>
+      </div>
+    </section>
+
+    <section class="controls">
+      <button id="connect-btn" class="btn btn-primary">Connect</button>
+      <button id="disconnect-btn" class="btn btn-secondary" disabled>Disconnect</button>
+    </section>
+
+    <section class="info">
+      <h2>Recent Activity</h2>
+      <div id="activity-log" class="activity-log">
+        <p class="empty-state">No activity yet</p>
+      </div>
+    </section>
+
+    <footer>
+      <p>Backend: localhost:8765</p>
+      <p>Dashboard: <a href="http://localhost:8080" target="_blank">localhost:8080</a></p>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
