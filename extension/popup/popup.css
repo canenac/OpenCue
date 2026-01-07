@@ -131,6 +131,309 @@ header .tagline {
   background-color: #545b62;
 }
 
+/* Mode Section */
+.mode-section {
+  margin-bottom: 16px;
+}
+
+.mode-section h2 {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #666;
+  margin-bottom: 8px;
+}
+
+.mode-selector {
+  display: flex;
+  gap: 4px;
+  background: #fff;
+  padding: 4px;
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.mode-btn {
+  flex: 1;
+  padding: 8px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  background: transparent;
+  color: #666;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+.mode-btn:hover {
+  background: #f0f0f0;
+}
+
+.mode-btn.active {
+  background: #007bff;
+  color: #fff;
+}
+
+.mode-desc {
+  font-size: 11px;
+  color: #999;
+  margin-top: 8px;
+  text-align: center;
+}
+
+/* Recording Section */
+.recording-section {
+  margin-bottom: 16px;
+}
+
+.recording-section h2 {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #666;
+  margin-bottom: 8px;
+}
+
+.recording-input {
+  margin-bottom: 8px;
+}
+
+.recording-input input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.recording-input input:focus {
+  outline: none;
+  border-color: #007bff;
+}
+
+.recording-controls {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.btn-record {
+  flex: 1;
+  background: #dc3545;
+  color: white;
+}
+
+.btn-record:hover:not(:disabled) {
+  background: #c82333;
+}
+
+.btn-stop {
+  flex: 1;
+  background: #28a745;
+  color: white;
+}
+
+.btn-stop:hover:not(:disabled) {
+  background: #218838;
+}
+
+.btn-abort {
+  flex: 1;
+  background: #6c757d;
+  color: white;
+}
+
+.btn-abort:hover:not(:disabled) {
+  background: #545b62;
+}
+
+.btn-resume {
+  flex: 1;
+  background: #17a2b8;
+  color: white;
+}
+
+.btn-resume:hover:not(:disabled) {
+  background: #138496;
+}
+
+.recording-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: #fff3cd;
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+
+.rec-indicator {
+  color: #dc3545;
+  animation: blink 1s infinite;
+}
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+#rec-cue-count {
+  font-weight: 500;
+  color: #333;
+}
+
+.fp-indicator {
+  font-size: 11px;
+  padding: 2px 6px;
+  background: #c8e6c9;
+  color: #2e7d32;
+  border-radius: 10px;
+  font-weight: 500;
+}
+
+#rec-elapsed {
+  margin-left: auto;
+  font-family: monospace;
+  color: #666;
+}
+
+.recording-hint {
+  font-size: 11px;
+  color: #999;
+  text-align: center;
+  margin: 0;
+}
+
+.paused-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #d1ecf1;
+  border-radius: 4px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.paused-indicator {
+  color: #17a2b8;
+  font-weight: bold;
+}
+
+/* Cue Files Section */
+.cue-section {
+  margin-bottom: 16px;
+}
+
+.cue-section h2 {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #666;
+  margin-bottom: 8px;
+}
+
+.cue-files-list {
+  background: #fff;
+  border-radius: 6px;
+  padding: 8px;
+  max-height: 150px;
+  overflow-y: auto;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.cue-files-list .empty-state {
+  text-align: center;
+  color: #999;
+  font-size: 12px;
+  padding: 8px 0;
+}
+
+.cue-file-item {
+  display: flex;
+  align-items: center;
+  padding: 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.cue-file-item:hover {
+  background: #f5f5f5;
+}
+
+.cue-file-item.selected {
+  background: #e3f2fd;
+  border-left: 3px solid #007bff;
+}
+
+.cue-file-info {
+  flex: 1;
+}
+
+.cue-file-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: #333;
+}
+
+.cue-file-meta {
+  font-size: 10px;
+  color: #999;
+}
+
+.cue-file-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: #e8e8e8;
+  color: #666;
+}
+
+.cue-file-badge.has-fp {
+  background: #c8e6c9;
+  color: #2e7d32;
+}
+
+/* Sync Status */
+.sync-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: #fff;
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.sync-indicator {
+  font-size: 12px;
+  color: #999;
+}
+
+.sync-indicator.syncing {
+  color: #ffc107;
+  animation: pulse 1s infinite;
+}
+
+.sync-indicator.synced {
+  color: #28a745;
+}
+
+.sync-indicator.lost {
+  color: #dc3545;
+}
+
+#sync-text {
+  font-size: 12px;
+  color: #666;
+}
+
 /* Info Section */
 .info {
   margin-bottom: 16px;

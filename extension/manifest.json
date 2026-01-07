@@ -1,13 +1,29 @@
 {
   "manifest_version": 2,
   "name": "OpenCue",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Cue-based playback overlays for family viewing",
 
   "permissions": [
     "activeTab",
+    "tabs",
     "storage",
-    "*://*.netflix.com/*"
+    "*://*.netflix.com/*",
+    "*://*.disneyplus.com/*",
+    "*://*.hulu.com/*",
+    "*://*.amazon.com/*",
+    "*://*.primevideo.com/*",
+    "*://*.max.com/*",
+    "*://*.hbomax.com/*",
+    "*://*.peacocktv.com/*",
+    "*://*.paramountplus.com/*",
+    "*://*.apple.com/*",
+    "*://*.tv.apple.com/*",
+    "*://*.crunchyroll.com/*",
+    "*://*.youtube.com/*",
+    "*://*.vudu.com/*",
+    "*://*.tubitv.com/*",
+    "*://*.pluto.tv/*"
   ],
 
   "background": {
@@ -17,7 +33,24 @@
 
   "content_scripts": [
     {
-      "matches": ["*://*.netflix.com/*"],
+      "matches": [
+        "*://*.netflix.com/*",
+        "*://*.disneyplus.com/*",
+        "*://*.hulu.com/*",
+        "*://*.amazon.com/*",
+        "*://*.primevideo.com/*",
+        "*://*.max.com/*",
+        "*://*.hbomax.com/*",
+        "*://*.peacocktv.com/*",
+        "*://*.paramountplus.com/*",
+        "*://*.apple.com/*",
+        "*://*.tv.apple.com/*",
+        "*://*.crunchyroll.com/*",
+        "*://*.youtube.com/*",
+        "*://*.vudu.com/*",
+        "*://*.tubitv.com/*",
+        "*://*.pluto.tv/*"
+      ],
       "js": ["content.js"],
       "run_at": "document_idle"
     }

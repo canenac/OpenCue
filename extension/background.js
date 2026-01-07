@@ -73,15 +73,46 @@ function handleBackendMessage(data) {
     const message = JSON.parse(data);
     console.log('[OpenCue] Received from backend:', message.type);
 
-    // Forward overlay commands to all Netflix tabs
-    if (message.type === 'overlay') {
-      browser.tabs.query({ url: '*://*.netflix.com/*' }).then((tabs) => {
+    // Messages to forward to content scripts
+    const forwardTypes = ['overlay', 'cue', 'cueEnd', 'syncState', 'modeSet', 'cueFileLoaded', 'sessionInfo', 'recordingStarted', 'recordingStopped', 'recordingStatus', 'recordingAborted', 'recordingPaused', 'recordingResumed'];
+
+    // All supported streaming service URLs
+    const streamingUrls = [
+      '*://*.netflix.com/*',
+      '*://*.disneyplus.com/*',
+      '*://*.hulu.com/*',
+      '*://*.amazon.com/*',
+      '*://*.primevideo.com/*',
+      '*://*.max.com/*',
+      '*://*.hbomax.com/*',
+      '*://*.peacocktv.com/*',
+      '*://*.paramountplus.com/*',
+      '*://*.apple.com/*',
+      '*://*.tv.apple.com/*',
+      '*://*.crunchyroll.com/*',
+      '*://*.youtube.com/*',
+      '*://*.vudu.com/*',
+      '*://*.tubitv.com/*',
+      '*://*.pluto.tv/*'
+    ];
+
+    if (forwardTypes.includes(message.type)) {
+      // Forward to all supported streaming tabs
+      browser.tabs.query({ url: streamingUrls }).then((tabs) => {
         tabs.forEach((tab) => {
           browser.tabs.sendMessage(tab.id, message).catch((err) => {
             // Tab might not have content script loaded yet
             console.log('[OpenCue] Could not send to tab:', tab.id);
           });
         });
+      });
+    }
+
+    // Also forward certain messages to popup
+    const popupTypes = ['cueFileList', 'recordingStarted', 'recordingStopped', 'recordingStatus', 'recordingAborted', 'recordingPaused', 'recordingResumed'];
+    if (popupTypes.includes(message.type)) {
+      browser.runtime.sendMessage(message).catch(() => {
+        // Popup might not be open
       });
     }
   } catch (error) {
@@ -116,8 +147,17 @@ function broadcastConnectionState() {
     // Popup might not be open
   });
 
-  // Send to all Netflix tabs
-  browser.tabs.query({ url: '*://*.netflix.com/*' }).then((tabs) => {
+  // All supported streaming service URLs
+  const streamingUrls = [
+    '*://*.netflix.com/*', '*://*.disneyplus.com/*', '*://*.hulu.com/*',
+    '*://*.amazon.com/*', '*://*.primevideo.com/*', '*://*.max.com/*',
+    '*://*.hbomax.com/*', '*://*.peacocktv.com/*', '*://*.paramountplus.com/*',
+    '*://*.apple.com/*', '*://*.tv.apple.com/*', '*://*.crunchyroll.com/*',
+    '*://*.youtube.com/*', '*://*.vudu.com/*', '*://*.tubitv.com/*', '*://*.pluto.tv/*'
+  ];
+
+  // Send to all streaming tabs
+  browser.tabs.query({ url: streamingUrls }).then((tabs) => {
     tabs.forEach((tab) => {
       browser.tabs.sendMessage(tab.id, stateMessage).catch(() => {
         // Tab might not have content script
@@ -154,6 +194,17 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case 'subtitle':
     case 'playback':
+    case 'position':
+    case 'setMode':
+    case 'loadCueFile':
+    case 'listCueFiles':
+    case 'getSessionInfo':
+    case 'startRecording':
+    case 'stopRecording':
+    case 'getRecordingStatus':
+    case 'abortRecording':
+    case 'pauseRecording':
+    case 'resumeRecording':
       // Forward to backend
       const sent = sendToBackend(message);
       sendResponse({ success: sent });

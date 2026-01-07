@@ -2,12 +2,39 @@
 OpenCue - Profanity Detector
 
 Regex-based profanity detection using configurable word lists.
+Uses syllable-matched replacements for natural flow.
 """
 
 import re
 import json
 from pathlib import Path
 from typing import List, Dict, Any
+
+# Import syllable-matched replacement library
+from profanity.replacements import (
+    get_replacement as get_syllable_replacement,
+    get_all_replacements,
+    get_replacement_display,
+    count_syllables
+)
+
+
+def get_replacement(word: str, match_syllables: bool = True) -> str:
+    """
+    Get a syllable-matched replacement for a profane word.
+
+    Uses the pre-computed replacement library for consistent,
+    syllable-matched replacements that flow naturally.
+    """
+    word_lower = word.lower().strip()
+    replacement = get_syllable_replacement(word_lower, match_syllables=match_syllables)
+
+    # Match original capitalization
+    if word.isupper():
+        return replacement.upper()
+    elif word and word[0].isupper():
+        return replacement.capitalize()
+    return replacement
 
 # Load word list
 WORDLIST_PATH = Path(__file__).parent / "wordlist.json"
@@ -62,7 +89,17 @@ def compile_patterns() -> List[Dict[str, Any]]:
 
                     # Create word boundary pattern
                     # Allows for common obfuscations like f*ck, sh!t
-                    pattern_str = r'\b' + re.escape(w).replace(r'\*', r'[*@#$!]?') + r'\b'
+                    # Also handles variations like fuckin', motherfuckin'
+                    escaped = re.escape(w).replace(r'\*', r'[*@#$!]?')
+
+                    # Only add optional suffixes if word doesn't already end with them
+                    w_lower = w.lower()
+                    if w_lower.endswith(('ing', 'in', 'er', 'ers', 'ed')):
+                        # Word already has suffix, just allow optional apostrophe
+                        pattern_str = r'\b' + escaped + r"'?\b"
+                    else:
+                        # Allow optional apostrophe variations and suffixes
+                        pattern_str = r'\b' + escaped + r"(?:'|in'?|er|ers|ed|ing)?\b"
 
                     try:
                         pattern = re.compile(pattern_str, re.IGNORECASE)
@@ -93,15 +130,17 @@ def detect_profanity(text: str) -> List[Dict[str, Any]]:
     """
     patterns = compile_patterns()
     detections = []
-    seen_words = set()  # Avoid duplicate detections
+    seen_matches = set()  # Avoid duplicate detections of same exact match
 
     for pattern_info in patterns:
         pattern = pattern_info["pattern"]
         matches = pattern.findall(text)
 
         for match in matches:
-            word_key = pattern_info["word"].lower()
-            if word_key in seen_words:
+            # Use the actual matched text as key (case-insensitive)
+            # This allows "fuck" and "fucker" in same subtitle
+            match_key = match.lower()
+            if match_key in seen_matches:
                 continue
 
             # TODO: Add context analysis for context_required words
@@ -119,10 +158,12 @@ def detect_profanity(text: str) -> List[Dict[str, Any]]:
                 if not is_exclamation:
                     continue
 
-            seen_words.add(word_key)
+            seen_matches.add(match_key)
             detections.append({
                 "word": pattern_info["word"],
+                "matched": match,  # The actual text that was matched
                 "display": pattern_info["display"],
+                "replacement": get_replacement(match),  # Silly replacement
                 "category": pattern_info["category"],
                 "severity": pattern_info["severity"],
                 "confidence": 0.95 if not pattern_info["context_required"] else 0.75

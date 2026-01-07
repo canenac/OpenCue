@@ -1,0 +1,47 @@
+{
+  "version": "2.0",
+  "content": {
+    "title": "Sample Movie",
+    "duration_ms": 7200000,
+    "content_hash": "sample123",
+    "imdb_id": "tt0000001"
+  },
+  "fingerprints": {
+    "algorithm": "chromaprint",
+    "sample_rate": 22050,
+    "markers": []
+  },
+  "cues": [
+    {
+      "id": "cue_001",
+      "start_ms": 15000,
+      "end_ms": 16200,
+      "action": "mute",
+      "category": "language.profanity.strong",
+      "word": "damn",
+      "confidence": 0.95
+    },
+    {
+      "id": "cue_002",
+      "start_ms": 45000,
+      "end_ms": 46500,
+      "action": "mute",
+      "category": "language.profanity.strong",
+      "word": "hell",
+      "confidence": 0.92
+    },
+    {
+      "id": "cue_003",
+      "start_ms": 120000,
+      "end_ms": 121800,
+      "action": "mute",
+      "category": "language.profanity.severe",
+      "word": "shit",
+      "confidence": 0.98
+    }
+  ],
+  "metadata": {
+    "created": "2026-01-06T12:00:00Z",
+    "tool_version": "1.0.0"
+  }
+}

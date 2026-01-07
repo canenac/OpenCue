@@ -93,6 +93,72 @@ async def get_recent_events():
     }
 
 
+@app.get("/api/cues")
+async def list_cue_files():
+    """List available cue files"""
+    from cue_manager import get_cue_manager
+    manager = get_cue_manager()
+    return {
+        "cue_files": [
+            {
+                "id": Path(info.path).stem,
+                "title": info.title,
+                "duration_ms": info.duration_ms,
+                "cue_count": info.cue_count,
+                "has_fingerprints": info.has_fingerprints,
+                "imdb_id": info.imdb_id
+            }
+            for info in manager.get_available()
+        ]
+    }
+
+
+@app.get("/api/cues/{cue_id}")
+async def get_cue_file(cue_id: str):
+    """Get a specific cue file"""
+    from cue_manager import get_cue_manager
+    manager = get_cue_manager()
+    data = manager.load(cue_id)
+    if data:
+        return data
+    return {"error": "Cue file not found"}
+
+
+@app.get("/api/cues/search/{query}")
+async def search_cue_files(query: str):
+    """Search for cue files"""
+    from cue_manager import get_cue_manager
+    manager = get_cue_manager()
+    results = manager.search(query)
+    return {
+        "results": [
+            {
+                "id": Path(info.path).stem,
+                "title": info.title,
+                "cue_count": info.cue_count
+            }
+            for info in results
+        ]
+    }
+
+
+@app.get("/api/sessions")
+async def get_sessions():
+    """Get active sync sessions"""
+    from sync_session import get_session_manager
+    manager = get_session_manager()
+    return manager.get_stats()
+
+
+@app.post("/api/cues/refresh")
+async def refresh_cue_index():
+    """Refresh the cue file index"""
+    from cue_manager import get_cue_manager
+    manager = get_cue_manager()
+    manager.refresh_index()
+    return {"status": "refreshed", "count": len(manager.get_available())}
+
+
 # Dashboard static files
 if DASHBOARD_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(DASHBOARD_DIR)), name="static")

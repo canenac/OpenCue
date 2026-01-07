@@ -7,10 +7,12 @@
 - Seed discussions in developer forums and family communities.
 
 ## Medium‑Term (Version 0.2–0.5)
-- Build simple cue editors and GUI tools for families.  
-- Cross‑platform support (Windows, Mac, Linux).  
-- Community guidelines for lawful collaboration.  
-- Publish technical + legal white paper documenting resilience against hostile litigation practices.  
+- Build simple cue editors and GUI tools for families.
+- Cross‑platform support (Windows, Mac, Linux).
+- **Batch/Series Processing**: Queue multiple episodes or entire seasons for automated recording mode. Watch first pass hands-off, then enjoy clean viewing for all content.
+- **Library Management**: Searchable catalog of recorded .opencue files with content titles, thumbnails, and metadata for easy retrieval.
+- Community guidelines for lawful collaboration.
+- Publish technical + legal white paper documenting resilience against hostile litigation practices.
 - Share concept diagrams to visualize overlay architecture.
 
 ## Long‑Term (Version 1.0+)

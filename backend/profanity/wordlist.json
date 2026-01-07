@@ -4,19 +4,19 @@
   "categories": {
     "profanity": {
       "severe": [
-        {"word": "fuck", "display": "f**k", "variants": ["fucking", "fucked", "fucker", "fuckers", "fucks", "motherfucker", "motherfucking"]},
-        {"word": "shit", "display": "sh*t", "variants": ["shitting", "shitty", "shits", "bullshit", "horseshit"]},
+        {"word": "fuck", "display": "f**k", "variants": ["fucking", "fuckin", "fucked", "fucker", "fuckers", "fucks", "motherfucker", "motherfucking", "motherfuckin", "motherfuck"]},
+        {"word": "shit", "display": "sh*t", "variants": ["shitting", "shittin", "shitty", "shits", "bullshit", "horseshit", "bullshittin"]},
         {"word": "cunt", "display": "c**t", "variants": ["cunts"]},
         {"word": "cock", "display": "c**k", "variants": ["cocks", "cocksucker"]},
         {"word": "dick", "display": "d**k", "variants": ["dicks", "dickhead"]},
         {"word": "pussy", "display": "p***y", "variants": ["pussies"]},
-        {"word": "bitch", "display": "b***h", "variants": ["bitches", "bitchy", "bitching"]},
+        {"word": "bitch", "display": "b***h", "variants": ["bitches", "bitchy", "bitching", "bitchin", "sonofabitch", "sonuvabitch"]},
         {"word": "bastard", "display": "ba****d", "variants": ["bastards"]},
         {"word": "asshole", "display": "a*****e", "variants": ["assholes"]},
         {"word": "whore", "display": "wh**e", "variants": ["whores"]}
       ],
       "moderate": [
-        {"word": "damn", "display": "da*n", "variants": ["damned", "dammit", "goddamn", "goddammit"]},
+        {"word": "damn", "display": "da*n", "variants": ["damned", "dammit", "goddamn", "goddammit", "goddamnit", "damnit"]},
         {"word": "hell", "display": "he*l", "variants": ["hellish"]},
         {"word": "ass", "display": "a*s", "variants": ["asses", "dumbass", "jackass", "badass"]},
         {"word": "crap", "display": "cr*p", "variants": ["crappy", "crapping"]},
