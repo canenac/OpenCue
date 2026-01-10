@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OpenCue</title>
-  <link rel="stylesheet" href="popup.css">
+  <link rel="stylesheet" href="sidebar.css">
 </head>
 <body>
   <div class="container">
@@ -39,6 +39,14 @@
       <h2>Recording</h2>
       <div class="recording-input">
         <input type="text" id="recording-title" placeholder="Title (e.g., Movie Name)" />
+        <button id="fetch-title-btn" class="btn btn-small btn-fetch" title="Get title from page">Get Title</button>
+      </div>
+      <div class="recording-options">
+        <span id="duration-display" class="duration-display"></span>
+        <label class="auto-stop-label">
+          <input type="checkbox" id="auto-stop-checkbox" checked />
+          Auto-stop when video ends
+        </label>
       </div>
       <div class="recording-controls" id="controls-idle">
         <button id="start-recording" class="btn btn-record">Start Recording</button>
@@ -51,7 +59,7 @@
         <button class="btn btn-stop" disabled>Processing...</button>
       </div>
       <div id="recording-status" class="recording-status" style="display: none;">
-        <span class="rec-indicator">●</span>
+        <span class="rec-indicator">REC</span>
         <span id="rec-cue-count">0 cues</span>
         <span id="rec-fp-count" class="fp-indicator" title="Audio fingerprints for cross-platform sync">0 fp</span>
         <span id="rec-elapsed">00:00</span>
@@ -68,7 +76,7 @@
       <h2>Cue Files</h2>
       <div id="current-content-match" class="current-content-match" style="display: none;">
         <div class="match-header">
-          <span class="match-icon">🎬</span>
+          <span class="match-icon">Film</span>
           <span id="current-content-title">Current: </span>
         </div>
         <div id="matched-cue-files" class="cue-files-list matched-files">
@@ -93,7 +101,7 @@
         <p class="offset-hint">Adjust if cues are early (-) or late (+) on this platform</p>
       </div>
       <div id="sync-status" class="sync-status" style="display: none;">
-        <span id="sync-indicator" class="sync-indicator">●</span>
+        <span id="sync-indicator" class="sync-indicator">*</span>
         <span id="sync-text">Not synced</span>
       </div>
     </section>
@@ -111,6 +119,6 @@
     </footer>
   </div>
 
-  <script src="popup.js"></script>
+  <script src="sidebar.js"></script>
 </body>
 </html>

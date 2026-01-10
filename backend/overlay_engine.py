@@ -25,7 +25,9 @@ except ImportError:
     print("[OpenCue] LLM context module not available")
 
 # Configuration
-MUTE_PADDING_MS = 100  # Padding before/after detected word
+MUTE_PADDING_BEFORE_MS = 400  # Padding BEFORE word (accounts for processing latency + subtitle timing)
+MUTE_PADDING_AFTER_MS = 150   # Padding AFTER word
+MIN_MUTE_DURATION_MS = 400    # Minimum mute duration to avoid pops
 USE_LLM_CONTEXT = True  # Enable LLM for context-aware filtering
 LLM_MODEL = "llama3.2:3b"  # Model to use for context analysis
 
@@ -137,9 +139,26 @@ async def process_subtitle(
         # Generate unique cue ID
         cue_id = f"cue_{uuid.uuid4().hex[:8]}"
 
-        # Calculate overlay timing with padding
-        overlay_start = max(0, start_ms - MUTE_PADDING_MS)
-        overlay_end = end_ms + MUTE_PADDING_MS
+        # Calculate word-specific timing based on position within subtitle
+        subtitle_duration = end_ms - start_ms
+        position_start = detection.get("position_start", 0.0)
+        position_end = detection.get("position_end", 1.0)
+
+        # Estimate when the word is spoken based on its position in text
+        # Add padding before and after for safety
+        word_start = start_ms + int(subtitle_duration * position_start)
+        word_end = start_ms + int(subtitle_duration * position_end)
+
+        # Apply padding (more before to account for processing latency)
+        overlay_start = max(0, word_start - MUTE_PADDING_BEFORE_MS)
+        overlay_end = word_end + MUTE_PADDING_AFTER_MS
+
+        # Ensure minimum duration to avoid audio pops
+        if overlay_end - overlay_start < MIN_MUTE_DURATION_MS:
+            # Center the minimum duration around the word
+            center = (word_start + word_end) // 2
+            overlay_start = max(0, center - MIN_MUTE_DURATION_MS // 2)
+            overlay_end = center + MIN_MUTE_DURATION_MS // 2
 
         command = {
             "cue_id": cue_id,
@@ -151,7 +170,9 @@ async def process_subtitle(
             "detected": detection["display"],
             "matched": detection.get("matched", detection["word"]),
             "replacement": detection.get("replacement", "****"),
-            "content_id": content_id
+            "content_id": content_id,
+            "word_position": f"{position_start:.2f}-{position_end:.2f}",  # Debug info
+            "subtitle_text": text  # Full subtitle for smart deduplication
         }
 
         if context_info:
@@ -159,7 +180,8 @@ async def process_subtitle(
 
         overlay_commands.append(command)
         print(f"[OpenCue] Detected: {detection['display']} -> mute {overlay_start}-{overlay_end}ms "
-              f"(matched='{command['matched']}', replacement='{command['replacement']}', confidence: {confidence:.2f})")
+              f"(word at {position_start:.0%}-{position_end:.0%} of subtitle, "
+              f"matched='{command['matched']}', replacement='{command['replacement']}')")
 
     return overlay_commands
 

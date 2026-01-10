@@ -190,7 +190,7 @@ or
 
                 # Fallback: check for keywords in response
                 response_lower = response_text.lower()
-                should_filter = "should_filter\": true" in response_lower or "mute" in response_lower
+                should_filter = '"should_filter": true' in response_lower or "mute" in response_lower
 
                 return {
                     "should_filter": should_filter,

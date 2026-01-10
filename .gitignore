@@ -423,3 +423,10 @@ FodyWeavers.xsd
 # Ignore editor temp files
 *.swp
 *.log
+
+# Python virtual environment
+venv311/
+venv/
+
+# Test audio files
+*.wav

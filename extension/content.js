@@ -18,9 +18,14 @@ const PLATFORMS = {
     name: 'Netflix',
     hostPattern: /netflix\.com/i,
     subtitleSelectors: [
+      // Current Netflix subtitle selectors (2024+)
       '.player-timedtext-text-container span',
+      '.player-timedtext span',
       '[data-uia="player-timedtext"] span',
-      '.player-timedtext span'
+      // Alternative/fallback selectors
+      '.player-timedtext-text-container',
+      '[class*="player-timedtext"] span',
+      '[class*="timedtext"] span'
     ],
     subtitleContainerCheck: (node) => {
       return node.classList?.contains('player-timedtext-text-container') ||
@@ -108,6 +113,8 @@ let syncStatusIndicator = null;
 let isRecording = false;
 let recordingOverlay = null;
 let recordingCueCount = 0;
+let recordingStartTime = null;
+let recordingTimerInterval = null;
 
 // Wake lock to prevent sleep during recording
 let wakeLock = null;
@@ -258,8 +265,16 @@ function createSubtitleOverlay() {
 
 /**
  * Hide native platform subtitles with CSS
+ * DISABLED: Since DRM blocks audio buffering, we don't need subtitle delay.
+ * Instead, we do in-place replacements on native subtitles.
  */
 function hideNativeSubtitles() {
+  // DISABLED - keep native subtitles visible, do in-place replacements instead
+  console.log('[OpenCue] Native subtitles NOT hidden (in-place replacement mode)');
+  return;
+
+  // Original code kept for reference:
+  /*
   if (!currentPlatform) return;
 
   const styleId = 'opencue-hide-subtitles';
@@ -290,6 +305,7 @@ function hideNativeSubtitles() {
 
   document.head.appendChild(style);
   console.log('[OpenCue] Native subtitles hidden');
+  */
 }
 
 /**
@@ -331,6 +347,14 @@ function createSyncStatusIndicator() {
 function updateSyncStatus(state, info = {}) {
   if (!syncStatusIndicator) return;
 
+  // Hide sync status during recording mode - recording has its own overlay
+  if (isRecording || sessionMode === 'recording') {
+    syncStatusIndicator.style.setProperty('display', 'none', 'important');
+    return;
+  }
+
+  // Show indicator
+  syncStatusIndicator.style.setProperty('display', 'block', 'important');
   syncState = state;
 
   const states = {
@@ -373,9 +397,20 @@ function startPositionReporting() {
   // Report position every 500ms when in cue file mode
   positionReportInterval = setInterval(() => {
     if (!videoElement || videoElement.paused) return;
-    if (sessionMode !== 'cue_file' && sessionMode !== 'hybrid') return;
+    if (sessionMode !== 'cue_file' && sessionMode !== 'hybrid') {
+      // Log occasionally to show mode mismatch
+      if (Math.random() < 0.02) {
+        console.log('[OpenCue] Position NOT sent - mode is:', sessionMode);
+      }
+      return;
+    }
 
     const positionMs = Math.floor(videoElement.currentTime * 1000);
+
+    // Log position sends periodically
+    if (positionMs % 5000 < 600) {
+      console.log('[OpenCue] Sending position:', positionMs, 'ms');
+    }
 
     browser.runtime.sendMessage({
       type: 'position',
@@ -383,8 +418,8 @@ function startPositionReporting() {
         position_ms: positionMs,
         content_id: getContentId()
       }
-    }).catch(() => {
-      // Backend might not be connected
+    }).catch((err) => {
+      console.log('[OpenCue] Position send failed:', err.message);
     });
   }, 500);
 
@@ -497,9 +532,10 @@ function handleModeSet(result) {
  */
 function handleCueFileLoaded(result) {
   if (result.success) {
-    console.log('[OpenCue] Cue file loaded, mode:', result.mode);
+    console.log('[OpenCue] Cue file loaded, mode:', result.mode, 'cue_count:', result.cue_count);
     sessionMode = result.mode;
     updateSyncStatus('syncing');
+    console.log('[OpenCue] sessionMode now:', sessionMode, '- position reporting should be active');
   } else {
     console.error('[OpenCue] Failed to load cue file:', result.error);
     updateSyncStatus('idle');
@@ -602,7 +638,7 @@ function createRecordingOverlay() {
       left: 0 !important;
       width: 100vw !important;
       height: 100vh !important;
-      background: rgba(20, 20, 40, 0.85) !important;
+      background: rgba(20, 20, 40, 0.95) !important;
       z-index: 2147483647 !important;
       display: flex !important;
       align-items: center !important;
@@ -721,12 +757,18 @@ function removeRecordingOverlay() {
  * Start recording mode with countdown
  */
 function startRecordingMode(title) {
-  console.log('[OpenCue] Starting recording countdown...');
+  console.log('[OpenCue] Starting recording countdown for:', title);
 
   // Show countdown overlay
   showCountdownOverlay(5, () => {
     // After countdown, activate recording
-    activateRecording(title);
+    console.log('[OpenCue] Countdown complete, activating recording...');
+    try {
+      activateRecording(title);
+      console.log('[OpenCue] Recording activated successfully');
+    } catch (err) {
+      console.error('[OpenCue] Error activating recording:', err);
+    }
   });
 }
 
@@ -872,14 +914,38 @@ function updateRecordingOverlayStatus(status) {
  * Activate recording after countdown
  */
 function activateRecording(title) {
+  console.log('[OpenCue] activateRecording() called with title:', title);
+
   isRecording = true;
   recordingCueCount = 0;
+  recordingStartTime = Date.now();
   sessionMode = 'recording';
+
+  // Hide sync status indicator during recording
+  if (syncStatusIndicator) {
+    syncStatusIndicator.style.setProperty('display', 'none', 'important');
+  }
+
+  // Start timer to update elapsed time every second
+  if (recordingTimerInterval) {
+    clearInterval(recordingTimerInterval);
+  }
+  recordingTimerInterval = setInterval(() => {
+    if (isRecording && recordingStartTime) {
+      const elapsedMs = Date.now() - recordingStartTime;
+      updateRecordingOverlay(recordingCueCount, elapsedMs);
+    }
+  }, 1000);
 
   // Try to find video element if not already found
   if (!videoElement) {
+    console.log('[OpenCue] Video element not found, searching...');
     findVideoElement();
   }
+
+  // Ensure subtitle observer is running
+  console.log('[OpenCue] Setting up subtitle observer...');
+  setupSubtitleObserver();
 
   // Request wake lock to prevent sleep
   requestWakeLock();
@@ -891,21 +957,39 @@ function activateRecording(title) {
   createRecordingOverlay();
   updateRecordingOverlay(0, 0, title || getContentTitle());
 
-  // Mute the video element
-  if (videoElement) {
-    videoElement.muted = true;
-    console.log('[OpenCue] Video muted for recording');
-  } else {
-    console.warn('[OpenCue] No video element found - cannot mute');
-    // Try to find and mute any video on the page
-    const videos = document.querySelectorAll('video');
-    videos.forEach((v, i) => {
-      v.muted = true;
-      console.log(`[OpenCue] Muted video element ${i + 1}`);
-    });
-  }
+  // NOTE: Do NOT mute the video element during precision recording!
+  // VB-Cable handles silent recording by routing audio to a virtual device.
+  // If we mute the video, NO audio goes anywhere (not even to VB-Cable).
+  // The video stays unmuted but user hears nothing because audio goes to VB-Cable.
+  console.log('[OpenCue] Video NOT muted - VB-Cable handles silent recording');
+
+  // Immediately run subtitle debug to see what's on the page
+  console.log('[OpenCue] Running immediate subtitle debug...');
+  debugFindSubtitles();
 
   console.log('[OpenCue] Recording mode started - overlay active, video muted, sleep prevented');
+}
+
+/**
+ * Control video playback (play/pause)
+ */
+function controlPlayback(action) {
+  const video = videoElement || document.querySelector('video');
+  if (!video) {
+    console.warn('[OpenCue] No video element found for playback control');
+    return false;
+  }
+
+  if (action === 'pause') {
+    video.pause();
+    console.log('[OpenCue] Video PAUSED');
+    return true;
+  } else if (action === 'play') {
+    video.play();
+    console.log('[OpenCue] Video PLAYING');
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -914,6 +998,13 @@ function activateRecording(title) {
 function stopRecordingMode() {
   isRecording = false;
   sessionMode = 'realtime';
+
+  // Stop the recording timer
+  if (recordingTimerInterval) {
+    clearInterval(recordingTimerInterval);
+    recordingTimerInterval = null;
+  }
+  recordingStartTime = null;
 
   // Release wake lock
   releaseWakeLock();
@@ -924,7 +1015,10 @@ function stopRecordingMode() {
   // Remove overlay
   removeRecordingOverlay();
 
-  // Unmute the video
+  // PAUSE the video when stopping recording (so user can review while processing)
+  controlPlayback('pause');
+
+  // Unmute the video (in case it was muted)
   if (videoElement) {
     videoElement.muted = false;
     console.log('[OpenCue] Video unmuted');
@@ -934,7 +1028,7 @@ function stopRecordingMode() {
   const videos = document.querySelectorAll('video');
   videos.forEach(v => v.muted = false);
 
-  console.log('[OpenCue] Recording mode stopped - wake lock released');
+  console.log('[OpenCue] Recording mode stopped - video paused, wake lock released');
 }
 
 /**
@@ -1103,6 +1197,68 @@ function setupVideoListeners() {
       }
     }).catch(() => {});
   });
+
+  // Detect when video ends (for auto-stop recording)
+  videoElement.addEventListener('ended', () => {
+    console.log('[OpenCue] Video ended');
+    sendPlaybackStatus('ended');
+
+    // Notify sidebar/popup that video has ended
+    browser.runtime.sendMessage({
+      type: 'videoEnded',
+      payload: {
+        content_id: getContentId(),
+        title: getContentTitle()
+      }
+    }).catch(() => {});
+  });
+}
+
+/**
+ * Debug function to find subtitles on the page
+ */
+function debugFindSubtitles() {
+  console.log('[OpenCue DEBUG] Searching for subtitles on page...');
+
+  // Try all possible subtitle selectors
+  const allSelectors = [
+    '.player-timedtext-text-container span',
+    '.player-timedtext span',
+    '[data-uia="player-timedtext"] span',
+    '.player-timedtext-text-container',
+    '[class*="timedtext"]',
+    '[class*="subtitle"]',
+    '[class*="caption"]',
+    '.shaka-text-container span',
+    // Generic fallbacks
+    'div[style*="text-align: center"]',
+  ];
+
+  for (const selector of allSelectors) {
+    try {
+      const elements = document.querySelectorAll(selector);
+      if (elements.length > 0) {
+        console.log(`[OpenCue DEBUG] Found ${elements.length} elements for: ${selector}`);
+        elements.forEach((el, i) => {
+          const text = el.textContent?.trim();
+          if (text && text.length > 1) {
+            console.log(`[OpenCue DEBUG]   ${i}: "${text.substring(0, 50)}"`);
+          }
+        });
+      }
+    } catch (e) {}
+  }
+}
+
+// Run debug every 5 seconds during recording
+let debugInterval = null;
+function startSubtitleDebug() {
+  if (debugInterval) return;
+  debugInterval = setInterval(() => {
+    if (isRecording) {
+      debugFindSubtitles();
+    }
+  }, 5000);
 }
 
 /**
@@ -1115,6 +1271,9 @@ function setupSubtitleObserver() {
   if (subtitleObserver) {
     subtitleObserver.disconnect();
   }
+
+  // Start debug logging
+  startSubtitleDebug();
 
   // Watch for subtitle container to appear
   subtitleObserver = new MutationObserver((mutations) => {
@@ -1271,6 +1430,8 @@ function isValidSubtitle(text) {
 function sendSubtitle(text, startMs) {
   const contentId = getContentId();
   const endMs = startMs + 3000; // Estimate 3 second subtitle duration
+  // Include current playback position for 3-step sync
+  const positionMs = videoElement ? Math.floor(videoElement.currentTime * 1000) : startMs;
 
   browser.runtime.sendMessage({
     type: 'subtitle',
@@ -1278,6 +1439,7 @@ function sendSubtitle(text, startMs) {
       text: text,
       start_ms: startMs,
       end_ms: endMs,
+      position_ms: positionMs,  // Current playback position for sync
       content_id: contentId
     }
   }).catch((err) => {
@@ -1319,6 +1481,16 @@ function getContentId() {
  */
 function handleOverlayCommand(command) {
   console.log('[OpenCue] Overlay command:', command.action, command.start_ms, '-', command.end_ms);
+
+  // If recording, increment cue count and update overlay
+  if (isRecording) {
+    recordingCueCount++;
+    if (recordingStartTime) {
+      const elapsedMs = Date.now() - recordingStartTime;
+      updateRecordingOverlay(recordingCueCount, elapsedMs);
+    }
+    console.log('[OpenCue] Recording cue count:', recordingCueCount);
+  }
 
   // Store replacement for subtitle filtering (will be applied when delayed subtitle displays)
   if (command.matched && command.replacement) {
@@ -1513,28 +1685,21 @@ function removeOverlay(overlay) {
 function muteAudio(shouldMute) {
   if (!videoElement) return;
 
-  if (audioBufferEnabled && window.openCueGainNode) {
-    // Using Web Audio API with delay buffer
-    // Schedule mute/unmute to happen when the delayed audio reaches the profanity
-    const currentTime = audioContext.currentTime;
+  // During recording mode with VB-Cable, do NOT mute - audio must flow to VB-Cable
+  // VB-Cable routes audio silently; muting stops all audio including to VB-Cable
+  if (isRecording) {
+    // Don't interfere with audio during precision recording
+    return;
+  }
 
-    if (shouldMute) {
-      // Mute immediately (audio is already delayed, so this syncs with detected word)
-      window.openCueGainNode.gain.setValueAtTime(0, currentTime);
-      console.log('[OpenCue] Audio muted (buffered)');
-    } else {
-      window.openCueGainNode.gain.setValueAtTime(1, currentTime);
-      console.log('[OpenCue] Audio unmuted (buffered)');
-    }
-  } else {
-    // Fallback: direct video muting (no buffer)
-    if (shouldMute && !videoElement.muted) {
-      videoElement.muted = true;
-      console.log('[OpenCue] Audio muted');
-    } else if (!shouldMute && videoElement.muted) {
-      videoElement.muted = false;
-      console.log('[OpenCue] Audio unmuted');
-    }
+  // ALWAYS use video.muted - Web Audio API doesn't work with DRM content (Netflix, Disney+, etc.)
+  // The gain node approach fails silently because DRM audio bypasses Web Audio API entirely
+  if (shouldMute && !videoElement.muted) {
+    videoElement.muted = true;
+    console.log('[OpenCue] Audio MUTED');
+  } else if (!shouldMute && videoElement.muted) {
+    videoElement.muted = false;
+    console.log('[OpenCue] Audio UNMUTED');
   }
 }
 
@@ -1544,10 +1709,18 @@ function muteAudio(shouldMute) {
 browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
   switch (message.type) {
     case 'getTitle':
-      // Return the current content title
+      // Return the current content title, ID, and duration
       const title = getContentTitle();
       const contentId = getContentId();
-      sendResponse({ title: title, contentId: contentId });
+      const video = videoElement || document.querySelector('video');
+      const durationMs = video && video.duration ? Math.floor(video.duration * 1000) : 0;
+      const currentPositionMs = video && video.currentTime ? Math.floor(video.currentTime * 1000) : 0;
+      sendResponse({
+        title: title,
+        contentId: contentId,
+        durationMs: durationMs,
+        currentPositionMs: currentPositionMs
+      });
       break;
 
     case 'overlay':
@@ -1620,6 +1793,41 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
       stopRecordingMode();
       console.log('[OpenCue] Recording aborted');
       sendResponse({ success: true });
+      break;
+
+    // Precision recording handlers (VB-Cable + Whisper mode)
+    case 'precisionRecordingStarted':
+      // Precision recording started - show overlay, mute video
+      handleRecordingStarted(message.payload);
+      console.log('[OpenCue] Precision recording started');
+      sendResponse({ success: true });
+      break;
+
+    case 'precisionRecordingStopped':
+      // Precision recording stopped - remove overlay, unmute video
+      console.log('[OpenCue] Precision recording stopped - dismissing overlay');
+      stopRecordingMode();  // Call directly to ensure overlay is removed
+      sendResponse({ success: true });
+      break;
+
+    case 'precisionRecordingStatus':
+      // Precision recording status update
+      handleRecordingStatus(message.payload);
+      sendResponse({ success: true });
+      break;
+
+    case 'precisionRecordingAborted':
+      // Precision recording aborted - remove overlay, unmute video
+      stopRecordingMode();
+      console.log('[OpenCue] Precision recording aborted');
+      sendResponse({ success: true });
+      break;
+
+    case 'controlPlayback':
+      // Control video playback (play/pause)
+      const action = message.payload?.action || message.action;
+      const result = controlPlayback(action);
+      sendResponse({ success: result, action: action });
       break;
 
     case 'recordingPaused':

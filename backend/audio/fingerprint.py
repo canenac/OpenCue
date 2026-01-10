@@ -28,11 +28,14 @@ except ImportError:
 # Check for fpcalc executable
 FPCALC_PATH = shutil.which('fpcalc') or shutil.which('fpcalc.exe')
 if not FPCALC_PATH:
-    # Check common locations
+    # Check common locations (relative to project and user paths)
+    _backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _project_dir = os.path.dirname(_backend_dir)
     for path in [
-        r'D:\opencue\venv\Scripts\fpcalc.exe',
-        r'C:\Users\canen\bin\fpcalc.exe',
+        os.path.join(_project_dir, 'venv311', 'Scripts', 'fpcalc.exe'),
+        os.path.join(_project_dir, 'venv', 'Scripts', 'fpcalc.exe'),
         os.path.expanduser('~/bin/fpcalc.exe'),
+        os.path.expanduser('~/bin/fpcalc'),
     ]:
         if os.path.exists(path):
             FPCALC_PATH = path
@@ -163,7 +166,7 @@ class Fingerprinter:
                 # Clean up temp file
                 try:
                     os.unlink(temp_path)
-                except:
+                except Exception:
                     pass
 
         except Exception as e:

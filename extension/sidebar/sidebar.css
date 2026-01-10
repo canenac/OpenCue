@@ -1,4 +1,4 @@
-/* OpenCue Popup Styles */
+/* OpenCue Sidebar Styles */
 
 * {
   box-sizing: border-box;
@@ -12,8 +12,10 @@ body {
   line-height: 1.5;
   color: #333;
   background: #f5f5f5;
-  width: 300px;
-  min-height: 200px;
+  /* Sidebar fills available width */
+  width: 100%;
+  min-width: 250px;
+  min-height: 100vh;
 }
 
 .container {
@@ -211,11 +213,13 @@ header .tagline {
 }
 
 .recording-input {
+  display: flex;
+  gap: 6px;
   margin-bottom: 8px;
 }
 
 .recording-input input {
-  width: 100%;
+  flex: 1;
   padding: 8px 12px;
   border: 1px solid #ddd;
   border-radius: 4px;
@@ -225,6 +229,41 @@ header .tagline {
 .recording-input input:focus {
   outline: none;
   border-color: #007bff;
+}
+
+.btn-fetch {
+  flex-shrink: 0;
+  background: #6c757d;
+  color: white;
+}
+
+.btn-fetch:hover:not(:disabled) {
+  background: #5a6268;
+}
+
+.recording-options {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 11px;
+  color: #666;
+}
+
+.duration-display {
+  font-weight: 500;
+  color: #333;
+}
+
+.auto-stop-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.auto-stop-label input[type="checkbox"] {
+  cursor: pointer;
 }
 
 .recording-controls {
@@ -285,6 +324,8 @@ header .tagline {
 
 .rec-indicator {
   color: #dc3545;
+  font-weight: bold;
+  font-size: 12px;
   animation: blink 1s infinite;
 }
 
@@ -412,7 +453,7 @@ header .tagline {
   background: #fff;
   border-radius: 6px;
   padding: 8px;
-  max-height: 150px;
+  max-height: 200px;
   overflow-y: auto;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
@@ -523,7 +564,7 @@ header .tagline {
   background: #fff;
   border-radius: 6px;
   padding: 12px;
-  max-height: 120px;
+  max-height: 150px;
   overflow-y: auto;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }

@@ -126,17 +126,21 @@ def detect_profanity(text: str) -> List[Dict[str, Any]]:
         text: Text to analyze
 
     Returns:
-        List of detection results
+        List of detection results with position info for precise timing
     """
     patterns = compile_patterns()
     detections = []
     seen_matches = set()  # Avoid duplicate detections of same exact match
 
+    # Calculate text length for position estimation
+    text_len = len(text)
+
     for pattern_info in patterns:
         pattern = pattern_info["pattern"]
-        matches = pattern.findall(text)
 
-        for match in matches:
+        # Use finditer to get match positions
+        for match_obj in pattern.finditer(text):
+            match = match_obj.group()
             # Use the actual matched text as key (case-insensitive)
             # This allows "fuck" and "fucker" in same subtitle
             match_key = match.lower()
@@ -159,6 +163,13 @@ def detect_profanity(text: str) -> List[Dict[str, Any]]:
                     continue
 
             seen_matches.add(match_key)
+
+            # Calculate position within text (0.0 to 1.0)
+            match_start = match_obj.start()
+            match_end = match_obj.end()
+            position_start = match_start / text_len if text_len > 0 else 0.0
+            position_end = match_end / text_len if text_len > 0 else 1.0
+
             detections.append({
                 "word": pattern_info["word"],
                 "matched": match,  # The actual text that was matched
@@ -166,7 +177,11 @@ def detect_profanity(text: str) -> List[Dict[str, Any]]:
                 "replacement": get_replacement(match),  # Silly replacement
                 "category": pattern_info["category"],
                 "severity": pattern_info["severity"],
-                "confidence": 0.95 if not pattern_info["context_required"] else 0.75
+                "confidence": 0.95 if not pattern_info["context_required"] else 0.75,
+                "position_start": position_start,  # 0.0 to 1.0 within subtitle
+                "position_end": position_end,      # 0.0 to 1.0 within subtitle
+                "char_start": match_start,         # Character position
+                "char_end": match_end
             })
 
     return detections
@@ -177,5 +192,48 @@ def reload_wordlist():
     global _wordlist, _patterns
     _wordlist = None
     _patterns = None
-    load_wordlist()
-    compile_patterns()
+
+
+def get_all_profanity_words() -> list:
+    """
+    Get a flat list of all profanity words for Whisper matching.
+    Returns the base words and common variations.
+    """
+    wordlist = load_wordlist()
+    words = set()
+
+    for word_entry in wordlist.get("words", []):
+        base_word = word_entry.get("word", "").lower()
+        if base_word:
+            words.add(base_word)
+
+        # Add variations
+        for variant in word_entry.get("variations", []):
+            words.add(variant.lower())
+
+    # Add common phonetic variations not in wordlist
+    extra_variations = [
+        # F-word variations
+        "fuck", "fucking", "fuckin", "fucked", "fucker", "fucks",
+        "motherfuck", "motherfucker", "motherfucking", "motherfuckin",
+        # S-word variations
+        "shit", "shitting", "shittin", "shitty", "bullshit",
+        # B-word variations
+        "bitch", "bitches", "bitching", "bitchin",
+        # A-word variations
+        "ass", "asshole", "asses", "dumbass", "badass", "jackass",
+        # D-word variations
+        "damn", "damned", "dammit", "goddamn", "goddammit",
+        # H-word variations
+        "hell", "hellhole",
+        # C-word variations
+        "crap", "crappy",
+        # Other common profanity
+        "piss", "pissed", "cunt", "dick", "cock", "bastard",
+        "whore", "slut", "douche", "douchebag"
+    ]
+
+    for word in extra_variations:
+        words.add(word)
+
+    return list(words)

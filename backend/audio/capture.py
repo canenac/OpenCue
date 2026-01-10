@@ -6,6 +6,13 @@ Hybrid audio capture supporting:
 2. Microphone fallback - when system audio unavailable
 """
 
+# CRITICAL: Fix for soundcard + NumPy 2.x compatibility
+# numpy.fromstring was removed in NumPy 2.0, soundcard uses it internally
+# This MUST happen before any other imports that might load soundcard
+import numpy
+if not hasattr(numpy, 'fromstring'):
+    numpy.fromstring = numpy.frombuffer
+
 import asyncio
 import numpy as np
 from typing import Optional, Callable, AsyncGenerator
@@ -13,6 +20,7 @@ from dataclasses import dataclass
 from enum import Enum
 import threading
 import queue
+from scipy import signal
 
 # Audio capture backends
 try:
@@ -134,31 +142,85 @@ class AudioCapture:
 
     def _capture_system_audio(self):
         """Capture from system audio loopback"""
+        # First, try VB-Cable with sounddevice (works better than soundcard)
+        if SOUNDDEVICE_AVAILABLE:
+            cable_idx = None
+            for i, d in enumerate(sd.query_devices()):
+                if 'cable output' in d['name'].lower() and 'vb-audio virtual' in d['name'].lower():
+                    cable_idx = i
+                    print(f"[OpenCue] Found VB-Cable Output: {d['name']}")
+                    break
+
+            if cable_idx is not None:
+                try:
+                    # Use sounddevice for VB-Cable (soundcard has issues with it)
+                    native_rate = 44100  # VB-Cable configured at 44100Hz
+                    chunk_samples = int(native_rate * self.config.chunk_duration)
+
+                    print(f"[OpenCue] Recording from VB-Cable (silent mode) at {native_rate}Hz")
+                    print(f"[OpenCue] Using sounddevice library for reliable capture")
+
+                    while self.running:
+                        try:
+                            data = sd.rec(chunk_samples, samplerate=native_rate,
+                                         channels=1, device=cable_idx, dtype='float32')
+                            sd.wait()
+
+                            data = data.flatten()
+                            self.audio_queue.put(data, timeout=0.1)
+                        except queue.Full:
+                            try:
+                                self.audio_queue.get_nowait()
+                                self.audio_queue.put(data, timeout=0.1)
+                            except Exception:
+                                pass
+                        except Exception as e:
+                            print(f"[OpenCue] VB-Cable capture error: {e}")
+                            break
+                    return
+                except Exception as e:
+                    print(f"[OpenCue] VB-Cable sounddevice error: {e}")
+
+        # Fallback to soundcard for Realtek loopback
         if not SOUNDCARD_AVAILABLE:
             return
 
         try:
-            # Get default speaker's loopback
-            speaker = sc.default_speaker()
-            loopback = sc.get_microphone(speaker.id, include_loopback=True)
+            speaker = None
+            for s in sc.all_speakers():
+                if 'realtek' in s.name.lower():
+                    speaker = s
+                    print(f"[OpenCue] Found Realtek: {s.name}")
+                    break
 
-            chunk_samples = int(self.config.sample_rate * self.config.chunk_duration)
+            if not speaker:
+                speaker = sc.default_speaker()
+                print(f"[OpenCue] Realtek not found, using default: {speaker.name}")
 
-            with loopback.recorder(samplerate=self.config.sample_rate, channels=self.config.channels) as mic:
-                print(f"[OpenCue] System audio capture active: {speaker.name}")
+            mic = sc.get_microphone(speaker.id, include_loopback=True)
+            print(f"[OpenCue] Using loopback capture from: {speaker.name}")
+
+            native_rate = 48000
+            native_chunk_samples = int(native_rate * self.config.chunk_duration)
+
+            with mic.recorder(samplerate=native_rate, channels=self.config.channels) as recorder:
+                print(f"[OpenCue] Audio capture active: {mic.name}")
+                print(f"[OpenCue] Capturing at {native_rate}Hz (will resample complete audio later)")
+
                 while self.running:
                     try:
-                        data = mic.record(numframes=chunk_samples)
-                        # Convert to mono float32 if needed
+                        data = recorder.record(numframes=native_chunk_samples)
+
                         if len(data.shape) > 1 and data.shape[1] > 1:
                             data = np.mean(data, axis=1)
-                        self.audio_queue.put(data.astype(np.float32), timeout=0.1)
+
+                        data = data.astype(np.float32).flatten()
+                        self.audio_queue.put(data, timeout=0.1)
                     except queue.Full:
-                        # Drop old data if queue is full
                         try:
                             self.audio_queue.get_nowait()
-                            self.audio_queue.put(data.astype(np.float32), timeout=0.1)
-                        except:
+                            self.audio_queue.put(data, timeout=0.1)
+                        except Exception:
                             pass
                     except Exception as e:
                         print(f"[OpenCue] System audio error: {e}")
@@ -166,7 +228,6 @@ class AudioCapture:
 
         except Exception as e:
             print(f"[OpenCue] Failed to start system audio: {e}")
-            # Try fallback to mic
             if CaptureMode.MICROPHONE in self.get_available_modes():
                 print("[OpenCue] Falling back to microphone...")
                 self._active_mode = CaptureMode.MICROPHONE

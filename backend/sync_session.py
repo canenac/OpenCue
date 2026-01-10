@@ -18,15 +18,23 @@ import time
 from websockets.server import WebSocketServerProtocol
 
 from cue_manager import get_cue_manager
+from subtitle_sync import SubtitleSyncEngine
 
-# Try to import audio fingerprinting (optional)
+# NOTE: The old fingerprinting/microsignature recording code has been deprecated.
+# Precision recording (audio/precision_recorder.py) now handles all recording with Whisper.
+# These imports are kept for backwards compatibility with cue file playback sync.
 try:
     from audio.capture import create_audio_capture
-    from audio.fingerprint import Fingerprinter, CHROMAPRINT_AVAILABLE
-    AUDIO_FINGERPRINTING_AVAILABLE = CHROMAPRINT_AVAILABLE
-except ImportError as e:
-    AUDIO_FINGERPRINTING_AVAILABLE = False
-    print(f"[OpenCue] Audio fingerprinting not available: {e}")
+    AUDIO_CAPTURE_AVAILABLE = True
+except ImportError:
+    AUDIO_CAPTURE_AVAILABLE = False
+
+# Microsignatures may still be used for cue file playback sync
+try:
+    from audio.microsignatures import MicrosignatureSequence, create_matcher
+    MICROSIGNATURES_AVAILABLE = True
+except ImportError:
+    MICROSIGNATURES_AVAILABLE = False
 
 
 class SessionMode(Enum):
@@ -61,19 +69,20 @@ class SyncSession:
     # Audio sync engine (if using cue file mode)
     sync_engine: Any = None
 
-    # Recording mode state
+    # Subtitle sync engine (3-step sync approach)
+    subtitle_sync_engine: Any = None
+
+    # Microsignature matcher for cue file playback verification
+    microsig_matcher: Any = None
+    microsig_reference: Any = None
+
+    # Recording mode state (DEPRECATED - use precision recording instead)
     recording: bool = False
     recording_start_time: Optional[datetime] = None
     recording_start_position_ms: int = 0
     recorded_cues: list = field(default_factory=list)
     recording_title: str = ""
-
-    # Audio fingerprint capture during recording
-    recording_audio_capture: Any = None
-    recording_fingerprinter: Any = None
-    recorded_fingerprints: list = field(default_factory=list)
-    fingerprint_capture_task: Any = None
-    fingerprint_interval_ms: int = 5000  # Capture fingerprint every 5 seconds
+    recorded_subtitles: list = field(default_factory=list)
 
 
 class SessionManager:
@@ -120,7 +129,7 @@ class SessionManager:
         if session.sync_engine:
             try:
                 await session.sync_engine.stop()
-            except:
+            except Exception:
                 pass
             session.sync_engine = None
 
@@ -162,21 +171,63 @@ class SessionManager:
         return data
 
     async def _start_sync_engine(self, session: SyncSession, cue_data: dict):
-        """Start audio sync engine for session"""
+        """Start sync engine for session (3-step approach)"""
+        # Check what sync data is available
+        fingerprints = cue_data.get("fingerprints", {})
+        markers = fingerprints.get("markers", [])
+        subtitles = cue_data.get("subtitles", [])
+        microsigs = cue_data.get("microsignatures", {})
+        microsig_sequences = microsigs.get("sequences", [])
+
+        # Load microsignatures for verification if available
+        if microsig_sequences and MICROSIGNATURES_AVAILABLE:
+            try:
+                session.microsig_matcher = create_matcher()
+                # Convert dict sequences back to MicrosignatureSequence objects
+                session.microsig_reference = [
+                    MicrosignatureSequence.from_dict(seq) for seq in microsig_sequences
+                ]
+                print(f"[OpenCue] Loaded {len(session.microsig_reference)} microsignature sequences for verification")
+            except Exception as e:
+                print(f"[OpenCue] Could not load microsignatures: {e}")
+                session.microsig_matcher = None
+                session.microsig_reference = None
+
+        # 3-step sync: try subtitle sync first (most reliable)
+        if subtitles:
+            print(f"[OpenCue] Cue file has {len(subtitles)} subtitle markers - using subtitle sync")
+            session.subtitle_sync_engine = SubtitleSyncEngine(cue_data)
+            session.sync_engine = None
+            # Start in pending state - will sync once subtitles are received
+            has_microsigs = session.microsig_reference is not None
+            await self._send_sync_state(session, "syncing", {
+                "mode": "subtitle",
+                "reason": "waiting_for_subtitles",
+                "has_microsignatures": has_microsigs
+            })
+            return
+
+        if not markers:
+            # No fingerprints and no subtitles - use timestamp-only mode
+            print(f"[OpenCue] No fingerprints or subtitles in cue file - using timestamp mode")
+            session.synced = True
+            session.sync_engine = None
+            session.subtitle_sync_engine = None
+            await self._send_sync_state(session, "synced", {"mode": "timestamp", "reason": "no_sync_data"})
+            return
+
+        # Has fingerprints - try audio sync
         try:
-            # Import here to avoid circular imports
             from audio.sync_engine import OpenCueFile, SyncEngine
 
             cue_file = OpenCueFile(cue_data)
 
-            # Create cue callback
             async def on_cue(cue, event_type):
                 await self._handle_cue_event(session, cue, event_type)
 
             def on_cue_sync(cue, event_type):
                 asyncio.create_task(on_cue(cue, event_type))
 
-            # Create state callback
             def on_state_change(state, info):
                 session.synced = state.value == "synced"
                 asyncio.create_task(self._send_sync_state(session, state.value, info))
@@ -193,9 +244,14 @@ class SessionManager:
 
         except ImportError as e:
             print(f"[OpenCue] Audio sync not available: {e}")
-            print("[OpenCue] Using timestamp-only mode")
+            session.synced = True
+            session.sync_engine = None
+            await self._send_sync_state(session, "synced", {"mode": "timestamp", "reason": "import_error"})
         except Exception as e:
             print(f"[OpenCue] Failed to start sync engine: {e}")
+            session.synced = True
+            session.sync_engine = None
+            await self._send_sync_state(session, "synced", {"mode": "timestamp", "reason": str(e)})
 
     async def _handle_cue_event(self, session: SyncSession, cue, event_type: str):
         """Handle cue start/end events"""
@@ -237,27 +293,68 @@ class SessionManager:
         except Exception as e:
             print(f"[OpenCue] Error sending sync state: {e}")
 
+    async def process_subtitle_for_sync(self, session: SyncSession, text: str, position_ms: int):
+        """Process incoming subtitle for sync (3-step approach)"""
+        if not session.subtitle_sync_engine:
+            return
+
+        # Process subtitle through sync engine
+        result = session.subtitle_sync_engine.process_subtitle(text, position_ms)
+
+        # Update session state based on result
+        if result.synced and not session.synced:
+            session.synced = True
+            session.sync_offset_ms = result.offset_ms
+            print(f"[OpenCue] Synced via subtitle! Offset: {result.offset_ms}ms (confidence: {result.confidence:.2f})")
+            await self._send_sync_state(session, "synced", {
+                "mode": "subtitle",
+                "offset_ms": result.offset_ms,
+                "confidence": result.confidence,
+                "matched": result.matched_subtitle
+            })
+        elif result.method == "pending_confirmation":
+            print(f"[OpenCue] Subtitle match pending confirmation (offset: {result.offset_ms}ms)")
+
     def update_position(self, session: SyncSession, position_ms: int):
         """Update playback position (for timestamp-only mode)"""
         session.last_position_ms = position_ms
         session.last_activity = datetime.now()
 
-        # Check cues if in cue file mode without audio sync
+        # Check cues if in cue file mode
         if session.mode in [SessionMode.CUE_FILE, SessionMode.HYBRID]:
-            if not session.sync_engine or not session.sync_engine.is_synced:
+            # Debug: Log position updates periodically
+            if position_ms % 5000 < 600:  # Log every ~5 seconds
+                print(f"[OpenCue] Position update: {position_ms}ms, synced={session.synced}, cue_file={session.cue_file_id}")
+
+            # Use subtitle sync offset if synced, otherwise timestamp-only
+            if session.subtitle_sync_engine and session.synced:
+                # Adjust position based on subtitle sync offset
+                adjusted_position = position_ms + session.subtitle_sync_engine.offset_ms
+                asyncio.create_task(self._check_cues_by_position(session, adjusted_position))
+            else:
+                # ALWAYS check cues with raw position while waiting for sync
+                # This ensures timestamp-only mode works as fallback
                 asyncio.create_task(self._check_cues_by_position(session, position_ms))
 
     async def _check_cues_by_position(self, session: SyncSession, position_ms: int):
         """Check and trigger cues based on reported position"""
         if not session.cue_file_id:
+            # Only log occasionally to avoid spam
+            if position_ms % 10000 < 600:
+                print(f"[OpenCue] No cue file loaded for session")
             return
 
         cue_data = self._load_cue_file(session.cue_file_id)
         if not cue_data:
+            print(f"[OpenCue] Could not load cue file: {session.cue_file_id}")
             return
 
         cues = cue_data.get("cues", [])
-        lookahead_ms = 200  # Trigger slightly early
+        lookahead_ms = 500  # Trigger slightly early (increased from 200)
+
+        # Debug: show cue check range periodically
+        if position_ms % 5000 < 600:
+            print(f"[OpenCue] Checking {len(cues)} cues at position {position_ms}ms (triggered: {len(session.triggered_cues)})")
 
         for cue in cues:
             cue_id = cue["id"]
@@ -271,6 +368,7 @@ class SessionManager:
 
                 session.triggered_cues.add(cue_id)
                 session.active_cues[cue_id] = cue
+                print(f"[OpenCue] TRIGGERING CUE: {cue_id} at position {position_ms}ms (cue: {start_ms}-{end_ms}ms)")
 
                 await self._send_cue_command(session, cue, "start")
 
@@ -322,7 +420,7 @@ class SessionManager:
         try:
             from profanity.detector import get_replacement
             return get_replacement(word)
-        except:
+        except Exception:
             return word[0] + "*" * (len(word) - 1) if len(word) > 1 else "****"
 
     def handle_seek(self, session: SyncSession, position_ms: int):
@@ -380,36 +478,22 @@ class SessionManager:
         }
 
     def start_recording(self, session: SyncSession, title: str, content_id: str) -> dict:
-        """Start recording mode for a session"""
+        """Start recording mode for a session.
+
+        DEPRECATED: This is the old subtitle-based recording mode.
+        Use precision recording (startPrecisionRecording) instead for accurate word-level timing.
+        """
+        print("[OpenCue] WARNING: Using deprecated subtitle-based recording.")
+        print("[OpenCue] Consider using precision recording for better accuracy.")
+
         session.mode = SessionMode.RECORDING
         session.recording = True
         session.recording_start_time = datetime.now()
         session.recording_start_position_ms = session.last_position_ms
         session.recorded_cues = []
-        session.recorded_fingerprints = []
+        session.recorded_subtitles = []
         session.recording_title = title or f"Recording {session.session_id}"
         session.content_id = content_id
-
-        # Start audio fingerprint capture if available
-        fingerprinting_started = False
-        if AUDIO_FINGERPRINTING_AVAILABLE:
-            try:
-                session.recording_audio_capture = create_audio_capture("auto")
-                if session.recording_audio_capture.start():
-                    from audio.fingerprint import Fingerprinter
-                    session.recording_fingerprinter = Fingerprinter(sample_rate=22050)
-                    # Start fingerprint capture task
-                    session.fingerprint_capture_task = asyncio.create_task(
-                        self._fingerprint_capture_loop(session)
-                    )
-                    fingerprinting_started = True
-                    print(f"[OpenCue] Audio fingerprinting started for recording")
-                else:
-                    print(f"[OpenCue] Audio capture not available - recording without fingerprints")
-            except Exception as e:
-                print(f"[OpenCue] Could not start audio fingerprinting: {e}")
-                session.recording_audio_capture = None
-                session.recording_fingerprinter = None
 
         print(f"[OpenCue] Recording started for session {session.session_id}: {session.recording_title}")
         return {
@@ -417,158 +501,111 @@ class SessionManager:
             "recording": True,
             "title": session.recording_title,
             "start_position_ms": session.recording_start_position_ms,
-            "fingerprinting": fingerprinting_started
+            "deprecated": True,
+            "message": "Using deprecated subtitle-based recording. Consider precision recording."
         }
 
-    async def _fingerprint_capture_loop(self, session: SyncSession):
-        """Background task to capture audio fingerprints during recording"""
-        import numpy as np
-        from audio.fingerprint import FingerprintMarker
-
-        SAMPLE_RATE = 22050
-        FINGERPRINT_DURATION_SEC = 5  # 5 seconds of audio per fingerprint
-        CAPTURE_INTERVAL_SEC = 5  # Capture every 5 seconds
-
-        audio_buffer = []
-        buffer_duration_ms = 0
-        last_fingerprint_time_ms = 0
-
-        print(f"[OpenCue] Fingerprint capture loop started")
-
-        try:
-            while session.recording and session.recording_audio_capture:
-                # Get audio chunk
-                chunk = session.recording_audio_capture.get_audio_chunk(timeout=0.5)
-                if chunk is not None:
-                    audio_buffer.append(chunk)
-                    chunk_duration_ms = int(len(chunk) / SAMPLE_RATE * 1000)
-                    buffer_duration_ms += chunk_duration_ms
-
-                    # Check if we have enough audio for a fingerprint
-                    if buffer_duration_ms >= FINGERPRINT_DURATION_SEC * 1000:
-                        # Combine buffer
-                        combined = np.concatenate(audio_buffer)
-
-                        # Calculate content timestamp for this fingerprint
-                        content_time_ms = session.last_position_ms
-
-                        # Only capture if enough time has passed since last fingerprint
-                        if content_time_ms - last_fingerprint_time_ms >= CAPTURE_INTERVAL_SEC * 1000:
-                            # Generate fingerprint
-                            fp = session.recording_fingerprinter.fingerprint(combined)
-                            if fp:
-                                marker = FingerprintMarker(
-                                    time_ms=content_time_ms,
-                                    fingerprint=fp
-                                )
-                                session.recorded_fingerprints.append(marker)
-                                last_fingerprint_time_ms = content_time_ms
-                                print(f"[OpenCue] Captured fingerprint at {content_time_ms}ms "
-                                      f"(total: {len(session.recorded_fingerprints)})")
-
-                        # Clear buffer (keep some overlap for continuity)
-                        keep_chunks = len(audio_buffer) // 4
-                        audio_buffer = audio_buffer[-keep_chunks:] if keep_chunks > 0 else []
-                        buffer_duration_ms = sum(int(len(c) / SAMPLE_RATE * 1000) for c in audio_buffer)
-
-                await asyncio.sleep(0.1)
-
-        except asyncio.CancelledError:
-            print(f"[OpenCue] Fingerprint capture loop cancelled")
-        except Exception as e:
-            print(f"[OpenCue] Fingerprint capture error: {e}")
-
-        print(f"[OpenCue] Fingerprint capture loop ended - {len(session.recorded_fingerprints)} markers captured")
+    # NOTE: _fingerprint_capture_loop removed - precision recording handles audio capture now
 
     def _stop_fingerprint_capture(self, session: SyncSession):
-        """Stop audio capture and fingerprinting for a session"""
-        # Cancel capture task
-        if session.fingerprint_capture_task:
+        """Stop audio capture for a session (deprecated)"""
+        # Cancel capture task if any
+        if hasattr(session, 'fingerprint_capture_task') and session.fingerprint_capture_task:
             session.fingerprint_capture_task.cancel()
             session.fingerprint_capture_task = None
 
-        # Stop audio capture
-        if session.recording_audio_capture:
+        # Stop audio capture if any
+        if hasattr(session, 'recording_audio_capture') and session.recording_audio_capture:
             session.recording_audio_capture.stop()
             session.recording_audio_capture = None
 
-        session.recording_fingerprinter = None
-
     def stop_recording(self, session: SyncSession) -> dict:
-        """Stop recording and return the recorded cues"""
+        """Stop recording and return the recorded cues.
+
+        DEPRECATED: This is the old subtitle-based recording mode.
+        Use precision recording (stopPrecisionRecording) instead.
+        """
         if not session.recording:
             return {"success": False, "error": "Not recording"}
 
-        session.recording = False
-        duration_ms = session.last_position_ms - session.recording_start_position_ms
+        try:
+            session.recording = False
+            duration_ms = session.last_position_ms - session.recording_start_position_ms
 
-        # Stop fingerprint capture
-        self._stop_fingerprint_capture(session)
+            # Stop any audio capture
+            self._stop_fingerprint_capture(session)
 
-        # Convert fingerprint markers to dict format
-        fingerprint_markers = []
-        for marker in session.recorded_fingerprints:
-            fingerprint_markers.append(marker.to_dict())
-
-        # Build .opencue file data
-        cue_data = {
-            "version": "2.0",
-            "content": {
-                "title": session.recording_title,
-                "duration_ms": duration_ms if duration_ms > 0 else session.last_position_ms,
-                "content_id": session.content_id,
-                "recorded_at": session.recording_start_time.isoformat() if session.recording_start_time else None
-            },
-            "fingerprints": {
-                "algorithm": "chromaprint",
-                "sample_rate": 22050,
-                "markers": fingerprint_markers
-            },
-            "cues": session.recorded_cues,
-            "metadata": {
-                "created": datetime.now().isoformat(),
-                "tool_version": "1.0.0",
-                "source": "recording_mode",
-                "fingerprint_count": len(fingerprint_markers)
+            # Build .opencue file data (simplified - no fingerprints)
+            cue_data = {
+                "version": "2.0",
+                "content": {
+                    "title": session.recording_title,
+                    "duration_ms": duration_ms if duration_ms > 0 else session.last_position_ms,
+                    "content_id": session.content_id,
+                    "recorded_at": session.recording_start_time.isoformat() if session.recording_start_time else None
+                },
+                "subtitles": session.recorded_subtitles,
+                "cues": session.recorded_cues,
+                "metadata": {
+                    "created": datetime.now().isoformat(),
+                    "tool_version": "1.0.0",
+                    "source": "subtitle_recording_deprecated",
+                    "subtitle_count": len(session.recorded_subtitles)
+                }
             }
-        }
 
-        cue_count = len(session.recorded_cues)
-        fingerprint_count = len(fingerprint_markers)
-        print(f"[OpenCue] Recording stopped for session {session.session_id}: "
-              f"{cue_count} cues, {fingerprint_count} fingerprints captured")
+            cue_count = len(session.recorded_cues)
+            subtitle_count = len(session.recorded_subtitles)
+            print(f"[OpenCue] Recording stopped for session {session.session_id}: "
+                  f"{cue_count} cues, {subtitle_count} subtitles")
 
-        # Reset recording state but keep cue_data for export
-        session.mode = SessionMode.REALTIME
-        session.recorded_fingerprints = []
+            # Clean up incremental save temp file
+            self._cleanup_temp_file(session)
 
-        return {
-            "success": True,
-            "recording": False,
-            "cue_count": cue_count,
-            "fingerprint_count": fingerprint_count,
-            "duration_ms": duration_ms,
-            "cue_data": cue_data
-        }
+            # Reset recording state
+            session.mode = SessionMode.REALTIME
+            session.recorded_subtitles = []
+
+            return {
+                "success": True,
+                "recording": False,
+                "cue_count": cue_count,
+                "subtitle_count": subtitle_count,
+                "duration_ms": duration_ms,
+                "cue_data": cue_data,
+                "deprecated": True
+            }
+
+        except Exception as e:
+            print(f"[OpenCue] ERROR stopping recording: {e}")
+            import traceback
+            traceback.print_exc()
+            session.recording = False
+            session.mode = SessionMode.REALTIME
+            return {
+                "success": False,
+                "error": str(e),
+                "cue_count": len(session.recorded_cues)
+            }
 
     def abort_recording(self, session: SyncSession) -> dict:
-        """Abort recording and discard all captured cues"""
+        """Abort recording and discard all captured cues (deprecated)"""
         if not session.recording:
             return {"success": False, "error": "Not recording"}
 
         cue_count = len(session.recorded_cues)
-        fingerprint_count = len(session.recorded_fingerprints)
+        subtitle_count = len(session.recorded_subtitles)
         print(f"[OpenCue] Recording ABORTED for session {session.session_id}: "
-              f"{cue_count} cues, {fingerprint_count} fingerprints discarded")
+              f"{cue_count} cues, {subtitle_count} subtitles discarded")
 
-        # Stop fingerprint capture
+        # Stop any audio capture
         self._stop_fingerprint_capture(session)
 
         # Reset all recording state
         session.recording = False
         session.mode = SessionMode.REALTIME
         session.recorded_cues = []
-        session.recorded_fingerprints = []
+        session.recorded_subtitles = []
         session.recording_title = ""
         session.recording_start_time = None
 
@@ -576,116 +613,64 @@ class SessionManager:
             "success": True,
             "aborted": True,
             "discarded_cues": cue_count,
-            "discarded_fingerprints": fingerprint_count
+            "discarded_subtitles": subtitle_count
         }
 
     def pause_recording(self, session: SyncSession) -> dict:
-        """Pause recording (keep cues, can resume later)"""
+        """Pause recording (deprecated - precision recording has no pause)"""
         if not session.recording:
             return {"success": False, "error": "Not recording"}
 
-        elapsed_ms = 0
-        if session.recording_start_time:
-            elapsed_ms = int((datetime.now() - session.recording_start_time).total_seconds() * 1000)
-
         cue_count = len(session.recorded_cues)
-        fingerprint_count = len(session.recorded_fingerprints)
         position_ms = session.last_position_ms
 
-        # Stop fingerprint capture (but keep captured fingerprints)
-        if session.fingerprint_capture_task:
-            session.fingerprint_capture_task.cancel()
-            session.fingerprint_capture_task = None
-        if session.recording_audio_capture:
-            session.recording_audio_capture.stop()
-            session.recording_audio_capture = None
-        session.recording_fingerprinter = None
-
         print(f"[OpenCue] Recording PAUSED for session {session.session_id}: "
-              f"{cue_count} cues, {fingerprint_count} fingerprints at {position_ms}ms")
+              f"{cue_count} cues at {position_ms}ms")
 
-        # Keep recording state but mark as paused
-        session.recording = False  # Stop accepting new cues
+        session.recording = False
 
         return {
             "success": True,
             "paused": True,
             "state": {
                 "cue_count": cue_count,
-                "fingerprint_count": fingerprint_count,
                 "position_ms": position_ms,
-                "elapsed_ms": elapsed_ms,
                 "title": session.recording_title
             }
         }
 
     def resume_recording(self, session: SyncSession, position_ms: int = 0) -> dict:
-        """Resume recording from a paused state"""
-        # Check if we have existing cues (from pause)
+        """Resume recording from paused state (deprecated)"""
         has_previous = len(session.recorded_cues) > 0
 
         session.recording = True
         session.mode = SessionMode.RECORDING
 
         if not has_previous:
-            # Fresh start
             session.recording_start_time = datetime.now()
             session.recording_start_position_ms = position_ms
-        # else keep existing start time and cues
-
-        # Restart fingerprint capture if available
-        fingerprinting_started = False
-        if AUDIO_FINGERPRINTING_AVAILABLE:
-            try:
-                session.recording_audio_capture = create_audio_capture("auto")
-                if session.recording_audio_capture.start():
-                    from audio.fingerprint import Fingerprinter
-                    session.recording_fingerprinter = Fingerprinter(sample_rate=22050)
-                    session.fingerprint_capture_task = asyncio.create_task(
-                        self._fingerprint_capture_loop(session)
-                    )
-                    fingerprinting_started = True
-                    print(f"[OpenCue] Audio fingerprinting resumed")
-            except Exception as e:
-                print(f"[OpenCue] Could not restart audio fingerprinting: {e}")
 
         print(f"[OpenCue] Recording RESUMED for session {session.session_id} at {position_ms}ms "
-              f"(existing cues: {len(session.recorded_cues)}, fingerprints: {len(session.recorded_fingerprints)})")
+              f"(existing cues: {len(session.recorded_cues)})")
 
         return {
             "success": True,
             "resumed": True,
             "existing_cues": len(session.recorded_cues),
-            "existing_fingerprints": len(session.recorded_fingerprints),
-            "position_ms": position_ms,
-            "fingerprinting": fingerprinting_started
+            "position_ms": position_ms
         }
 
     def add_recorded_cue(self, session: SyncSession, cue: dict) -> bool:
-        """Add a detected cue to the recording (with minimal deduplication)"""
+        """Add a detected cue to the recording (deprecated subtitle-based recording)"""
         if not session.recording:
             return False
-
-        word = cue.get("matched", cue.get("word", "")).lower()
-        start_ms = cue.get("start_ms", 0)
-
-        # Only skip if EXACT same word at EXACT same timestamp (within 100ms)
-        # This handles Netflix sending same subtitle multiple times
-        # but preserves intentional repetition like "Fuck you. Fuck you. Fuck you."
-        DEDUP_WINDOW_MS = 100  # Very tight window - only catches true duplicates
-        for existing in session.recorded_cues:
-            if existing["word"].lower() == word:
-                time_diff = abs(existing["start_ms"] - start_ms)
-                if time_diff < DEDUP_WINDOW_MS:
-                    # Skip duplicate
-                    return False
 
         # Generate unique cue ID
         cue_id = f"cue_{len(session.recorded_cues) + 1:04d}"
 
         recorded_cue = {
             "id": cue_id,
-            "start_ms": start_ms,
+            "start_ms": cue.get("start_ms", 0),
             "end_ms": cue.get("end_ms", 0),
             "action": cue.get("action", "mute"),
             "category": cue.get("category", "language.profanity"),
@@ -694,16 +679,93 @@ class SessionManager:
         }
 
         session.recorded_cues.append(recorded_cue)
-        print(f"[OpenCue] Recorded cue {cue_id}: {recorded_cue['word']} at {recorded_cue['start_ms']}ms")
+        print(f"[OpenCue] Recorded cue {cue_id}: {recorded_cue['word']} at {recorded_cue['start_ms']}ms (total: {len(session.recorded_cues)})")
+
+        # Auto-save incrementally to prevent data loss
+        self._incremental_save(session)
+
+        return True
+
+    def _incremental_save(self, session: SyncSession):
+        """Save recording progress incrementally to prevent data loss"""
+        try:
+            from pathlib import Path
+            import json
+
+            # Create temp file with recording progress
+            cues_dir = Path(__file__).parent / "cues"
+            cues_dir.mkdir(exist_ok=True)
+
+            # Use session ID for temp filename
+            safe_title = "".join(c for c in session.recording_title if c.isalnum() or c in (' ', '-', '_')).strip()
+            safe_title = safe_title[:50] if safe_title else "recording"
+            temp_file = cues_dir / f".{safe_title}_recording.tmp"
+
+            # Build partial cue data
+            partial_data = {
+                "version": "2.0",
+                "content": {
+                    "title": session.recording_title,
+                    "content_id": session.content_id,
+                    "recording_in_progress": True,
+                    "recorded_at": session.recording_start_time.isoformat() if session.recording_start_time else None
+                },
+                "cues": session.recorded_cues,
+                "subtitles": session.recorded_subtitles[-50:],  # Last 50 subtitles
+                "metadata": {
+                    "cue_count": len(session.recorded_cues),
+                    "subtitle_count": len(session.recorded_subtitles),
+                    "last_update": datetime.now().isoformat()
+                }
+            }
+
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                json.dump(partial_data, f, indent=2)
+
+        except Exception as e:
+            print(f"[OpenCue] Warning: Incremental save failed: {e}")
+
+    def _cleanup_temp_file(self, session: SyncSession):
+        """Remove incremental save temp file after successful save"""
+        try:
+            from pathlib import Path
+            cues_dir = Path(__file__).parent / "cues"
+            safe_title = "".join(c for c in session.recording_title if c.isalnum() or c in (' ', '-', '_')).strip()
+            safe_title = safe_title[:50] if safe_title else "recording"
+            temp_file = cues_dir / f".{safe_title}_recording.tmp"
+            if temp_file.exists():
+                temp_file.unlink()
+                print(f"[OpenCue] Cleaned up temp file: {temp_file.name}")
+        except Exception as e:
+            print(f"[OpenCue] Warning: Could not clean up temp file: {e}")
+
+    def add_recorded_subtitle(self, session: SyncSession, text: str, time_ms: int) -> bool:
+        """Add a subtitle snapshot during recording (for 3-step sync)"""
+        if not session.recording:
+            return False
+
+        # Only record meaningful subtitles (10+ chars, not duplicate)
+        if len(text.strip()) < 10:
+            return False
+
+        # Skip if duplicate of recent subtitle (within 1 second)
+        for existing in session.recorded_subtitles[-5:]:  # Check last 5
+            if existing["text"] == text and abs(existing["time_ms"] - time_ms) < 1000:
+                return False
+
+        subtitle_entry = {
+            "time_ms": time_ms,
+            "text": text
+        }
+        session.recorded_subtitles.append(subtitle_entry)
         return True
 
     def get_recording_status(self, session: SyncSession) -> dict:
-        """Get current recording status"""
+        """Get current recording status (deprecated subtitle-based recording)"""
         if not session.recording:
             return {
                 "recording": False,
-                "cue_count": 0,
-                "fingerprint_count": 0
+                "cue_count": 0
             }
 
         elapsed_ms = session.last_position_ms - session.recording_start_position_ms
@@ -711,10 +773,10 @@ class SessionManager:
             "recording": True,
             "title": session.recording_title,
             "cue_count": len(session.recorded_cues),
-            "fingerprint_count": len(session.recorded_fingerprints),
             "elapsed_ms": elapsed_ms,
             "start_position_ms": session.recording_start_position_ms,
-            "current_position_ms": session.last_position_ms
+            "current_position_ms": session.last_position_ms,
+            "deprecated": True
         }
 
 

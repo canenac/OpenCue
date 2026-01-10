@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "OpenCue",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Cue-based playback overlays for family viewing",
 
   "permissions": [
@@ -28,7 +28,7 @@
 
   "background": {
     "scripts": ["background.js"],
-    "persistent": false
+    "persistent": true
   },
 
   "content_scripts": [
@@ -56,14 +56,23 @@
     }
   ],
 
+  "sidebar_action": {
+    "default_title": "OpenCue",
+    "default_panel": "sidebar/sidebar.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png"
+    }
+  },
+
   "browser_action": {
-    "default_popup": "popup/popup.html",
     "default_icon": {
       "16": "icons/icon-16.png",
       "32": "icons/icon-32.png",
       "48": "icons/icon-48.png"
     },
-    "default_title": "OpenCue"
+    "default_title": "Toggle OpenCue Sidebar"
   },
 
   "icons": {

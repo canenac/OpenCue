@@ -1,0 +1,21 @@
+{
+  "version": "2.0",
+  "content": {
+    "title": "History of Swear WordsF**k",
+    "content_id": "",
+    "duration_ms": 1987000
+  },
+  "cues": [],
+  "metadata": {
+    "created": "2026-01-09T11:58:05.603956",
+    "creator": "OpenCue Precision Recorder",
+    "whisper_model": "base",
+    "playback_speed": 1,
+    "word_count": 0,
+    "source": "whisper_transcription"
+  },
+  "transcription": {
+    "full_text": "",
+    "language": "en"
+  }
+}

@@ -28,11 +28,11 @@ class CueManager:
     """Manages .opencue file loading and lookup"""
 
     def __init__(self, cue_directory: Optional[str] = None):
-        # Default cue directory
+        # Default cue directory (backend/cues where recordings are saved)
         if cue_directory:
             self.cue_dir = Path(cue_directory)
         else:
-            self.cue_dir = Path(__file__).parent.parent / "cues"
+            self.cue_dir = Path(__file__).parent / "cues"
 
         # Create directory if it doesn't exist
         self.cue_dir.mkdir(parents=True, exist_ok=True)

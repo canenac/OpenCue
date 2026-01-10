@@ -58,22 +58,63 @@ async def handle_message(websocket: WebSocketServerProtocol, session, raw_messag
         print(f"[OpenCue] Received: {msg_type}")
 
         if msg_type == "subtitle":
+            text = payload.get("text", "")
+            start_ms = payload.get("start_ms", 0)
+            end_ms = payload.get("end_ms", 0)
+            position_ms = payload.get("position_ms", start_ms)  # Current playback position
+
+            # Deduplicate Netflix's technical duplicate subtitle sends
+            # Netflix often sends the same subtitle 2-5 times in quick succession
+            SUBTITLE_DEDUP_WINDOW_MS = 300  # Same text within 300ms = duplicate
+            if not hasattr(session, '_last_subtitles'):
+                session._last_subtitles = []  # List of (text, timestamp) tuples
+
+            # Check for duplicate
+            current_time = position_ms
+            is_duplicate = False
+            for prev_text, prev_time in session._last_subtitles:
+                if prev_text == text and abs(current_time - prev_time) < SUBTITLE_DEDUP_WINDOW_MS:
+                    is_duplicate = True
+                    break
+
+            if is_duplicate:
+                # Skip this duplicate subtitle
+                print(f"[OpenCue] Skipping duplicate subtitle (Netflix artifact)")
+                return
+
+            # Add to recent subtitles (keep last 10)
+            session._last_subtitles.append((text, current_time))
+            if len(session._last_subtitles) > 10:
+                session._last_subtitles.pop(0)
+
             # Real-time subtitle processing (including recording mode)
             if session.mode in [SessionMode.REALTIME, SessionMode.HYBRID, SessionMode.RECORDING]:
-                text = payload.get("text", "")
-                print(f"[OpenCue] Subtitle: {text[:80]}{'...' if len(text) > 80 else ''}")
+                # Safe print - replace Unicode chars that Windows console can't handle
+                safe_text = text[:80].encode('ascii', 'replace').decode('ascii')
+                print(f"[OpenCue] Subtitle: {safe_text}{'...' if len(text) > 80 else ''}")
 
                 # Process subtitle and check for overlay triggers
                 overlay_commands = await process_subtitle(
-                    text=payload.get("text", ""),
-                    start_ms=payload.get("start_ms", 0),
-                    end_ms=payload.get("end_ms", 0),
+                    text=text,
+                    start_ms=start_ms,
+                    end_ms=end_ms,
                     content_id=payload.get("content_id", "")
                 )
 
                 # Send overlay commands back to extension (and record if in recording mode)
                 for command in overlay_commands:
                     await send_overlay_command(websocket, command, session)
+
+                # If recording, also capture subtitle for 3-step sync
+                if session.recording:
+                    session_manager = get_session_manager()
+                    session_manager.add_recorded_subtitle(session, text, position_ms)
+
+            # Cue file mode - use subtitles for sync
+            elif session.mode == SessionMode.CUE_FILE:
+                session_manager = get_session_manager()
+                # Process subtitle for sync matching
+                await session_manager.process_subtitle_for_sync(session, text, position_ms)
 
         elif msg_type == "playback":
             # Playback status update
@@ -107,9 +148,11 @@ async def handle_message(websocket: WebSocketServerProtocol, session, raw_messag
         elif msg_type == "loadCueFile":
             # Load a specific cue file
             cue_file_id = payload.get("id")
+            print(f"[OpenCue] Loading cue file: {cue_file_id}")
             if cue_file_id:
                 session_manager = get_session_manager()
                 result = await session_manager.set_mode(session, "cue_file", cue_file_id)
+                print(f"[OpenCue] Cue file load result: {result}")
                 await websocket.send(json.dumps({
                     "type": "cueFileLoaded",
                     "payload": result
@@ -133,6 +176,41 @@ async def handle_message(websocket: WebSocketServerProtocol, session, raw_messag
                 "type": "cueFileList",
                 "payload": {"files": cue_files}
             }))
+
+        elif msg_type == "searchCueFiles":
+            # Search cue files by title
+            from cue_manager import get_cue_manager
+            manager = get_cue_manager()
+            query = payload.get("query", "")
+
+            # Refresh index to pick up any new files
+            manager.refresh_index()
+
+            if query:
+                results = manager.search(query)
+            else:
+                results = manager.get_available()
+
+            cue_files = [
+                {
+                    "id": info.path,
+                    "title": info.title,
+                    "duration_ms": info.duration_ms,
+                    "cue_count": info.cue_count,
+                    "has_fingerprints": info.has_fingerprints,
+                    "imdb_id": info.imdb_id
+                }
+                for info in results
+            ]
+            await websocket.send(json.dumps({
+                "type": "cueFileSearchResults",
+                "payload": {
+                    "query": query,
+                    "files": cue_files,
+                    "count": len(cue_files)
+                }
+            }))
+            print(f"[OpenCue] Cue file search '{query}': {len(cue_files)} results")
 
         elif msg_type == "getSessionInfo":
             # Get current session info
@@ -159,6 +237,7 @@ async def handle_message(websocket: WebSocketServerProtocol, session, raw_messag
             content_id = payload.get("content_id", session.content_id or "unknown")
             session_manager = get_session_manager()
             result = session_manager.start_recording(session, title, content_id)
+            print(f"[OpenCue] Recording started - session.recording={session.recording}, mode={session.mode}, title={title}")
             await websocket.send(json.dumps({
                 "type": "recordingStarted",
                 "payload": result
@@ -167,26 +246,38 @@ async def handle_message(websocket: WebSocketServerProtocol, session, raw_messag
         elif msg_type == "stopRecording":
             # Stop recording and get cue data
             session_manager = get_session_manager()
-            result = session_manager.stop_recording(session)
+            try:
+                result = session_manager.stop_recording(session)
+            except Exception as e:
+                print(f"[OpenCue] ERROR in stop_recording: {e}")
+                import traceback
+                traceback.print_exc()
+                result = {"success": False, "error": str(e), "cue_count": 0}
 
             # Auto-save to cues folder
             if result.get("success") and result.get("cue_data"):
-                cue_data = result["cue_data"]
-                title = cue_data.get("content", {}).get("title", "recording")
-                # Sanitize filename
-                safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).strip()
-                safe_title = safe_title[:50] if safe_title else "recording"
-                filename = f"{safe_title}.opencue"
+                try:
+                    cue_data = result["cue_data"]
+                    title = cue_data.get("content", {}).get("title", "recording")
+                    # Sanitize filename
+                    safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).strip()
+                    safe_title = safe_title[:50] if safe_title else "recording"
+                    filename = f"{safe_title}.opencue"
 
-                cues_dir = Path(__file__).parent / "cues"
-                cues_dir.mkdir(exist_ok=True)
-                filepath = cues_dir / filename
+                    cues_dir = Path(__file__).parent / "cues"
+                    cues_dir.mkdir(exist_ok=True)
+                    filepath = cues_dir / filename
 
-                with open(filepath, 'w', encoding='utf-8') as f:
-                    json.dump(cue_data, f, indent=2)
+                    with open(filepath, 'w', encoding='utf-8') as f:
+                        json.dump(cue_data, f, indent=2)
 
-                result["saved_to"] = str(filepath)
-                print(f"[OpenCue] Cue file saved to: {filepath}")
+                    result["saved_to"] = str(filepath)
+                    print(f"[OpenCue] Cue file saved to: {filepath}")
+                except Exception as e:
+                    print(f"[OpenCue] ERROR saving cue file: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    result["save_error"] = str(e)
 
             await websocket.send(json.dumps({
                 "type": "recordingStopped",
@@ -230,6 +321,86 @@ async def handle_message(websocket: WebSocketServerProtocol, session, raw_messag
                 "payload": result
             }))
 
+        # ========== PRECISION RECORDING (Whisper-based) ==========
+
+        elif msg_type == "checkPrecisionRequirements":
+            # Check if VB-Cable and Whisper are available
+            from audio.precision_recorder import get_precision_recorder
+            recorder = get_precision_recorder()
+            result = recorder.check_requirements()
+            await websocket.send(json.dumps({
+                "type": "precisionRequirements",
+                "payload": result
+            }))
+
+        elif msg_type == "startPrecisionRecording":
+            # Start precision recording with audio capture
+            from audio.precision_recorder import get_precision_recorder, RecordingConfig
+            recorder = get_precision_recorder()
+
+            title = payload.get("title", "")
+            content_id = payload.get("content_id", session.content_id or "unknown")
+            playback_speed = payload.get("playback_speed", 1.0)
+            use_virtual_cable = payload.get("use_virtual_cable", True)
+            whisper_model = payload.get("whisper_model", "base")
+            video_start_position_ms = payload.get("video_start_position_ms", 0)
+
+            config = RecordingConfig(
+                use_virtual_cable=use_virtual_cable,
+                whisper_model=whisper_model,
+                playback_speed=playback_speed,
+                video_start_position_ms=video_start_position_ms
+            )
+            print(f"[OpenCue] Video start position: {video_start_position_ms}ms")
+
+            result = await recorder.start_recording(title, content_id, config)
+            print(f"[OpenCue] Precision recording started: {result}")
+
+            await websocket.send(json.dumps({
+                "type": "precisionRecordingStarted",
+                "payload": result
+            }))
+
+        elif msg_type == "stopPrecisionRecording":
+            # Stop recording and process with Whisper
+            from audio.precision_recorder import get_precision_recorder
+            recorder = get_precision_recorder()
+
+            recording_id = payload.get("recording_id")
+            result = await recorder.stop_recording(recording_id)
+            print(f"[OpenCue] Precision recording stopped: {result.get('cue_count', 0)} cues")
+
+            await websocket.send(json.dumps({
+                "type": "precisionRecordingStopped",
+                "payload": result
+            }))
+
+        elif msg_type == "getPrecisionRecordingStatus":
+            # Get status of precision recording
+            from audio.precision_recorder import get_precision_recorder
+            recorder = get_precision_recorder()
+
+            recording_id = payload.get("recording_id")
+            result = recorder.get_recording_status(recording_id)
+
+            await websocket.send(json.dumps({
+                "type": "precisionRecordingStatus",
+                "payload": result
+            }))
+
+        elif msg_type == "abortPrecisionRecording":
+            # Abort precision recording
+            from audio.precision_recorder import get_precision_recorder
+            recorder = get_precision_recorder()
+
+            recording_id = payload.get("recording_id")
+            result = recorder.abort_recording(recording_id)
+
+            await websocket.send(json.dumps({
+                "type": "precisionRecordingAborted",
+                "payload": result
+            }))
+
         else:
             print(f"[OpenCue] Unknown message type: {msg_type}")
 
@@ -258,9 +429,14 @@ async def send_overlay_command(websocket: WebSocketServerProtocol, command: dict
         record_event(command)
 
         # If session is recording, add to recorded cues
-        if session and session.recording:
+        if session is None:
+            print(f"[OpenCue] WARNING: session is None, cannot record cue")
+        elif not session.recording:
+            print(f"[OpenCue] DEBUG: session.recording is False, not recording cue")
+        else:
             session_manager = get_session_manager()
-            session_manager.add_recorded_cue(session, command)
+            result = session_manager.add_recorded_cue(session, command)
+            print(f"[OpenCue] Recording cue result: {result}, total cues: {len(session.recorded_cues)}")
 
     except Exception as e:
         print(f"[OpenCue] Error sending overlay command: {e}")

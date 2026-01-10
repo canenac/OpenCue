@@ -1,7 +1,8 @@
 /**
- * OpenCue - Popup Script
+ * OpenCue - Sidebar Script
  *
- * Controls for the browser action popup.
+ * Controls for the persistent sidebar panel.
+ * The sidebar stays open while interacting with the page, unlike the popup.
  */
 
 // Elements
@@ -28,8 +29,10 @@ const cueSearchBtn = document.getElementById('cue-search-btn');
 // Recording elements
 const recordingSection = document.getElementById('recording-section');
 const recordingTitleInput = document.getElementById('recording-title');
+const fetchTitleBtn = document.getElementById('fetch-title-btn');
+const durationDisplay = document.getElementById('duration-display');
+const autoStopCheckbox = document.getElementById('auto-stop-checkbox');
 const startRecordingBtn = document.getElementById('start-recording');
-const resumeRecordingBtn = document.getElementById('resume-recording');
 const stopRecordingBtn = document.getElementById('stop-recording');
 const abortRecordingBtn = document.getElementById('abort-recording');
 const recordingStatus = document.getElementById('recording-status');
@@ -55,6 +58,8 @@ let recordingStartTime = null;
 let recordingTimer = null;
 let lastRecordingState = null;  // For resume functionality
 let precisionRecordingId = null;  // ID from precision recording
+let videoDurationMs = 0;  // Duration of current video
+let autoStopEnabled = true;  // Auto-stop recording when video ends
 const activityItems = [];
 
 // Mode descriptions
@@ -111,8 +116,8 @@ function addActivityItem(action, details) {
   // Add to top of log
   activityLog.insertBefore(item, activityLog.firstChild);
 
-  // Keep only last 10 items
-  while (activityLog.children.length > 10) {
+  // Keep only last 20 items (more for sidebar since it persists)
+  while (activityLog.children.length > 20) {
     activityLog.removeChild(activityLog.lastChild);
   }
 }
@@ -218,14 +223,14 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
       break;
 
     case 'recordingStatus':
-      console.log('[OpenCue Popup] Received recordingStatus:', message.payload);
+      console.log('[OpenCue Sidebar] Received recordingStatus:', message.payload);
       // Only handle old recording system if NOT using precision recording
       if (precisionRecordingId) {
-        console.log('[OpenCue Popup] Ignoring old recordingStatus - using precision recording');
+        console.log('[OpenCue Sidebar] Ignoring old recordingStatus - using precision recording');
         break;
       }
       if (message.payload.recording) {
-        // Restore recording state if popup was reopened during recording
+        // Restore recording state if sidebar was opened during recording
         if (!isRecording) {
           isRecording = true;
           currentMode = 'recording';
@@ -238,7 +243,7 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
           recordingStartTime = Date.now() - elapsedMs;
           startRecordingTimer();
           recordingTitleInput.value = message.payload.title || '';
-          console.log('[OpenCue Popup] Recording state restored, elapsed:', elapsedMs);
+          console.log('[OpenCue Sidebar] Recording state restored, elapsed:', elapsedMs);
         }
         updateRecordingCueCount(message.payload.cue_count);
         updateRecordingFpCount(message.payload.fingerprint_count || 0);
@@ -263,6 +268,16 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
           type: 'getRecordingStatus',
           payload: {}
         }).catch(() => {});
+      }
+      break;
+
+    case 'videoEnded':
+      // Video has finished playing - auto-stop recording if enabled
+      console.log('[OpenCue Sidebar] Video ended');
+      addActivityItem('info', 'Video ended');
+      if (isRecording && autoStopEnabled) {
+        addActivityItem('info', 'Auto-stopping recording...');
+        stopRecording();
       }
       break;
   }
@@ -356,7 +371,7 @@ function renderCueFiles() {
     item.innerHTML = `
       <div class="cue-file-info">
         <div class="cue-file-title">${file.title}</div>
-        <div class="cue-file-meta">${file.cue_count} cues • ${duration}</div>
+        <div class="cue-file-meta">${file.cue_count} cues - ${duration}</div>
       </div>
       ${badge}
     `;
@@ -391,7 +406,7 @@ function selectCueFile(fileId) {
  * Update sync status UI
  */
 function updateSyncStatusUI(state, info = {}) {
-  console.log('[OpenCue Popup] Sync state:', state, info);
+  console.log('[OpenCue Sidebar] Sync state:', state, info);
   syncIndicator.className = 'sync-indicator ' + state;
 
   const stateTexts = {
@@ -437,59 +452,74 @@ function formatDuration(ms) {
  */
 function startRecording() {
   const title = recordingTitleInput.value.trim() || 'Untitled Recording';
-  console.log('[OpenCue] startRecording called');
+  console.log('[OpenCue Sidebar] startRecording called');
 
-  // Update UI immediately (don't wait for backend)
-  isRecording = true;
-  isPaused = false;
-  isProcessing = false;
-  precisionRecordingId = 'pending';  // Set temporary ID to block old recordingStatus handler
-  recordingStartTime = Date.now();
-  console.log('[OpenCue] State set: isRecording=', isRecording, 'isPaused=', isPaused, 'isProcessing=', isProcessing);
-  updateRecordingUI();
-  console.log('[OpenCue] stopRecordingBtn.disabled =', stopRecordingBtn.disabled);
-  startRecordingTimer();
-
-  // Tell content script to show overlay
+  // First, get current video position from content script
   browser.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
-    if (tabs[0]) {
+    if (!tabs[0]) {
+      addActivityItem('error', 'No streaming tab found');
+      return;
+    }
+
+    // Get video position before starting recording
+    browser.tabs.sendMessage(tabs[0].id, { type: 'getTitle' }).then((response) => {
+      const videoStartPositionMs = (response && response.currentPositionMs) || 0;
+      const contentId = (response && response.contentId) || '';
+
+      console.log('[OpenCue Sidebar] Video position at recording start:', videoStartPositionMs, 'ms');
+      addActivityItem('info', 'Starting at video position: ' + formatDuration(videoStartPositionMs));
+
+      // Update UI
+      isRecording = true;
+      isPaused = false;
+      isProcessing = false;
+      precisionRecordingId = 'pending';
+      recordingStartTime = Date.now();
+      console.log('[OpenCue Sidebar] State set: isRecording=', isRecording, 'isPaused=', isPaused, 'isProcessing=', isProcessing);
+      updateRecordingUI();
+      startRecordingTimer();
+
+      // Tell content script to show overlay
       browser.tabs.sendMessage(tabs[0].id, {
         type: 'precisionRecordingStarted',
         payload: { success: true, title: title }
       }).catch(() => {
-        console.log('[OpenCue Popup] Could not notify content script');
+        console.log('[OpenCue Sidebar] Could not notify content script');
       });
-    }
-  });
 
-  // Use precision recording (VB-Cable + Whisper)
-  browser.runtime.sendMessage({
-    type: 'startPrecisionRecording',
-    payload: {
-      title: title,
-      content_id: '',  // Will be filled from playback
-      use_virtual_cable: true,
-      whisper_model: 'base',
-      playback_speed: 1.0
-    }
-  }).then(() => {
-    addActivityItem('record', 'Precision recording started (audio capture)');
-  }).catch((err) => {
-    // Reset state on failure
-    isRecording = false;
-    updateRecordingUI();
-    stopRecordingTimer();
-    console.error('Error starting precision recording:', err);
-    addActivityItem('error', 'Failed to start recording');
+      // Use precision recording with video start position
+      browser.runtime.sendMessage({
+        type: 'startPrecisionRecording',
+        payload: {
+          title: title,
+          content_id: contentId,
+          use_virtual_cable: true,
+          whisper_model: 'base',
+          playback_speed: 1.0,
+          video_start_position_ms: videoStartPositionMs  // Critical: offset for cue timestamps
+        }
+      }).then(() => {
+        addActivityItem('record', 'Precision recording started (audio capture)');
+      }).catch((err) => {
+        isRecording = false;
+        updateRecordingUI();
+        stopRecordingTimer();
+        console.error('Error starting precision recording:', err);
+        addActivityItem('error', 'Failed to start recording');
+      });
+
+    }).catch((err) => {
+      console.log('[OpenCue Sidebar] Could not get video position:', err);
+      addActivityItem('error', 'Could not get video position');
+    });
   });
 }
 
 /**
  * Stop recording (save) - triggers Whisper processing
- * ALWAYS tries to stop, even if local state is wrong
  */
 function stopRecording() {
-  console.log('[OpenCue Popup] stopRecording() called');
+  console.log('[OpenCue Sidebar] stopRecording() called');
 
   // Immediately tell content script to stop (pause video, remove overlay)
   browser.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
@@ -507,14 +537,14 @@ function stopRecording() {
   updateRecordingUI();
   addActivityItem('processing', 'Processing audio with Whisper...');
 
-  // Send stop to backend - ALWAYS, don't check local state
+  // Send stop to backend
   browser.runtime.sendMessage({
     type: 'stopPrecisionRecording',
     payload: { recording_id: precisionRecordingId || 'any' }
   }).then((response) => {
-    console.log('[OpenCue Popup] stopPrecisionRecording response:', response);
+    console.log('[OpenCue Sidebar] stopPrecisionRecording response:', response);
   }).catch((err) => {
-    console.error('[OpenCue Popup] Error stopping precision recording:', err);
+    console.error('[OpenCue Sidebar] Error stopping precision recording:', err);
     isProcessing = false;
     isRecording = false;
     precisionRecordingId = null;
@@ -526,7 +556,6 @@ function stopRecording() {
 
 /**
  * Abort recording (discard)
- * ALWAYS tries to abort, even if local state is wrong
  */
 function abortRecording() {
   if (!confirm('Abort recording? All captured audio will be discarded.')) {
@@ -541,7 +570,7 @@ function abortRecording() {
   stopRecordingTimer();
   updateRecordingUI();
 
-  // Send abort to backend - ALWAYS
+  // Send abort to backend
   browser.runtime.sendMessage({
     type: 'abortPrecisionRecording',
     payload: { recording_id: precisionRecordingId || 'any' }
@@ -555,53 +584,10 @@ function abortRecording() {
 }
 
 /**
- * Pause recording (for resume later)
- */
-function pauseRecording() {
-  browser.runtime.sendMessage({
-    type: 'pauseRecording',
-    payload: {}
-  }).then((response) => {
-    if (response && response.success) {
-      isPaused = true;
-      lastRecordingState = response.state;
-      stopRecordingTimer();
-      updateRecordingUI();
-      addActivityItem('pause', `Paused at ${formatDuration(response.state.position_ms)}`);
-    }
-  }).catch((err) => {
-    console.error('Error pausing recording:', err);
-  });
-}
-
-/**
- * Resume recording from paused state
- */
-function resumeRecording() {
-  const resumePosition = lastRecordingState ? lastRecordingState.position_ms : 0;
-
-  browser.runtime.sendMessage({
-    type: 'resumeRecording',
-    payload: {
-      position_ms: resumePosition
-    }
-  }).then(() => {
-    isRecording = true;
-    isPaused = false;
-    recordingStartTime = Date.now() - (lastRecordingState ? lastRecordingState.elapsed_ms : 0);
-    updateRecordingUI();
-    startRecordingTimer();
-    addActivityItem('resume', `Resumed from ${formatDuration(resumePosition)}`);
-  }).catch((err) => {
-    console.error('Error resuming recording:', err);
-  });
-}
-
-/**
  * Handle recording started response
  */
 function handleRecordingStarted(payload) {
-  console.log('[OpenCue Popup] handleRecordingStarted:', payload);
+  console.log('[OpenCue Sidebar] handleRecordingStarted:', payload);
   isRecording = true;
   isProcessing = false;
   recordingStartTime = Date.now();
@@ -634,21 +620,21 @@ function handleRecordingStarted(payload) {
  * Handle recording stopped response (precision recording)
  */
 function handleRecordingStopped(payload) {
-  console.log('[OpenCue Popup] handleRecordingStopped:', payload);
+  console.log('[OpenCue Sidebar] handleRecordingStopped:', payload);
   isRecording = false;
   isProcessing = false;
   precisionRecordingId = null;
   stopRecordingTimer();
   updateRecordingUI();
 
-  // Directly tell content script to remove overlay (backup in case websocket message doesn't arrive)
+  // Directly tell content script to remove overlay
   browser.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
     if (tabs[0]) {
       browser.tabs.sendMessage(tabs[0].id, {
         type: 'precisionRecordingStopped',
         payload: payload
       }).catch(() => {
-        console.log('[OpenCue Popup] Could not send stop to content script');
+        console.log('[OpenCue Sidebar] Could not send stop to content script');
       });
     }
   });
@@ -657,7 +643,7 @@ function handleRecordingStopped(payload) {
     // Download the .opencue file
     const cueData = payload.cue_data;
     const filename = sanitizeFilename(cueData.content.title) + '.opencue';
-    console.log('[OpenCue Popup] Downloading cue file:', filename, 'with', payload.cue_count, 'cues');
+    console.log('[OpenCue Sidebar] Downloading cue file:', filename, 'with', payload.cue_count, 'cues');
     downloadCueFile(cueData, filename);
 
     const wordCount = payload.word_count || 0;
@@ -666,7 +652,7 @@ function handleRecordingStopped(payload) {
     // Notify about audio restoration
     addActivityItem('info', 'Audio restored to speakers');
   } else if (payload.error) {
-    console.error('[OpenCue Popup] Recording stop failed:', payload.error);
+    console.error('[OpenCue Sidebar] Recording stop failed:', payload.error);
     addActivityItem('error', `Processing failed: ${payload.error}`);
   }
 }
@@ -675,11 +661,11 @@ function handleRecordingStopped(payload) {
  * Handle precision recording status update
  */
 function handlePrecisionRecordingStatus(payload) {
-  console.log('[OpenCue Popup] handlePrecisionRecordingStatus:', payload);
+  console.log('[OpenCue Sidebar] handlePrecisionRecordingStatus:', payload);
   if (payload.active) {
     isRecording = true;
-    isProcessing = false;  // If active, not processing
-    isPaused = false;      // Active recording is not paused
+    isProcessing = false;
+    isPaused = false;
     precisionRecordingId = payload.recording_id;
 
     // Switch to recording mode and show recording section
@@ -694,7 +680,6 @@ function handlePrecisionRecordingStatus(payload) {
     }
 
     if (payload.chunks_captured) {
-      // Update some kind of progress indicator
       recFpCount.textContent = `${payload.chunks_captured} chunks`;
     }
     if (payload.duration_ms) {
@@ -702,7 +687,7 @@ function handlePrecisionRecordingStatus(payload) {
       recordingStartTime = Date.now() - payload.duration_ms;
       startRecordingTimer();
     }
-    updateRecordingUI();  // Enable abort button etc
+    updateRecordingUI();
   } else {
     // No active recording - reset all state
     isRecording = false;
@@ -718,7 +703,7 @@ function handlePrecisionRecordingStatus(payload) {
  * Handle recording aborted response
  */
 function handleRecordingAborted(payload) {
-  console.log('[OpenCue Popup] handleRecordingAborted:', payload);
+  console.log('[OpenCue Sidebar] handleRecordingAborted:', payload);
   isRecording = false;
   isProcessing = false;
   precisionRecordingId = null;
@@ -742,7 +727,7 @@ function handleRecordingAborted(payload) {
  * Handle precision requirements check response
  */
 function handlePrecisionRequirements(payload) {
-  console.log('[OpenCue Popup] handlePrecisionRequirements:', payload);
+  console.log('[OpenCue Sidebar] handlePrecisionRequirements:', payload);
   if (!payload.ready) {
     // Show what's missing
     let missing = [];
@@ -759,12 +744,12 @@ function handlePrecisionRequirements(payload) {
 }
 
 /**
- * Update recording UI - BULLETPROOF VERSION
+ * Update recording UI
  *
  * Uses separate divs for each state - no complex show/hide logic
  */
 function updateRecordingUI() {
-  console.log('[OpenCue] updateRecordingUI: isRecording=', isRecording, 'isProcessing=', isProcessing);
+  console.log('[OpenCue Sidebar] updateRecordingUI: isRecording=', isRecording, 'isProcessing=', isProcessing);
 
   const controlsIdle = document.getElementById('controls-idle');
   const controlsRecording = document.getElementById('controls-recording');
@@ -793,8 +778,7 @@ function updateRecordingUI() {
     recordingTitleInput.disabled = false;
   }
 
-  // Always hide resume and paused status (not using pause feature)
-  if (resumeRecordingBtn) resumeRecordingBtn.style.display = 'none';
+  // Always hide paused status (not using pause feature)
   if (pausedStatus) pausedStatus.style.display = 'none';
 }
 
@@ -802,6 +786,7 @@ function updateRecordingUI() {
  * Start recording timer
  */
 function startRecordingTimer() {
+  if (recordingTimer) return;  // Don't start multiple timers
   recordingTimer = setInterval(() => {
     if (recordingStartTime) {
       const elapsed = Date.now() - recordingStartTime;
@@ -968,9 +953,17 @@ modeButtons.forEach((btn) => {
 
 // Recording button listeners
 startRecordingBtn.addEventListener('click', startRecording);
-resumeRecordingBtn.addEventListener('click', resumeRecording);
 stopRecordingBtn.addEventListener('click', stopRecording);
 abortRecordingBtn.addEventListener('click', abortRecording);
+fetchTitleBtn.addEventListener('click', fetchContentTitle);
+
+// Auto-stop checkbox listener
+if (autoStopCheckbox) {
+  autoStopCheckbox.addEventListener('change', () => {
+    autoStopEnabled = autoStopCheckbox.checked;
+    console.log('[OpenCue Sidebar] Auto-stop:', autoStopEnabled ? 'enabled' : 'disabled');
+  });
+}
 
 // Cue search listeners
 if (cueSearchBtn) {
@@ -1000,6 +993,12 @@ if (cueSearchInput) {
  * Fetch content title from active streaming tab
  */
 function fetchContentTitle() {
+  // Show loading state
+  if (fetchTitleBtn) {
+    fetchTitleBtn.textContent = '...';
+    fetchTitleBtn.disabled = true;
+  }
+
   // Query for all supported streaming service tabs
   const streamingUrls = [
     '*://*.netflix.com/*',
@@ -1020,6 +1019,13 @@ function fetchContentTitle() {
     '*://*.pluto.tv/*'
   ];
 
+  const resetButton = () => {
+    if (fetchTitleBtn) {
+      fetchTitleBtn.textContent = 'Get Title';
+      fetchTitleBtn.disabled = false;
+    }
+  };
+
   browser.tabs.query({
     active: true,
     currentWindow: true,
@@ -1028,33 +1034,58 @@ function fetchContentTitle() {
     if (tabs.length > 0) {
       // Send message to content script to get title
       browser.tabs.sendMessage(tabs[0].id, { type: 'getTitle' }).then((response) => {
+        resetButton();
         if (response && response.title && response.title !== 'Unknown Title') {
           recordingTitleInput.value = response.title;
           recordingTitleInput.placeholder = response.title;
-          console.log('[OpenCue] Auto-detected title:', response.title);
+          console.log('[OpenCue Sidebar] Fetched title:', response.title);
+
+          // Store and display duration
+          if (response.durationMs && response.durationMs > 0) {
+            videoDurationMs = response.durationMs;
+            const durationStr = formatDuration(videoDurationMs);
+            if (durationDisplay) {
+              durationDisplay.textContent = `Duration: ${durationStr}`;
+            }
+            addActivityItem('info', `${response.title} (${durationStr})`);
+            console.log('[OpenCue Sidebar] Duration:', durationStr);
+          } else {
+            if (durationDisplay) {
+              durationDisplay.textContent = '';
+            }
+            addActivityItem('info', `Title: ${response.title}`);
+          }
 
           // Auto-search for matching cue files
           autoSearchForContent(response.title);
+        } else {
+          addActivityItem('error', 'Could not detect title');
         }
       }).catch((err) => {
-        console.log('[OpenCue] Could not get title from tab:', err.message);
+        resetButton();
+        console.log('[OpenCue Sidebar] Could not get title from tab:', err.message);
+        addActivityItem('error', 'No response from page');
       });
+    } else {
+      resetButton();
+      addActivityItem('error', 'No streaming tab found');
     }
   }).catch((err) => {
-    console.log('[OpenCue] Error querying tabs:', err);
+    resetButton();
+    console.log('[OpenCue Sidebar] Error querying tabs:', err);
+    addActivityItem('error', 'Error querying tabs');
   });
 }
 
 /**
- * Check if recording is in progress when popup opens
- * SIMPLIFIED: Just ask backend for status
+ * Check if recording is in progress when sidebar opens
  */
 function checkRecordingStatus() {
   browser.runtime.sendMessage({
     type: 'getPrecisionRecordingStatus',
     payload: {}
   }).catch((err) => {
-    console.log('[OpenCue Popup] Could not check status:', err.message);
+    console.log('[OpenCue Sidebar] Could not check status:', err.message);
   });
 }
 
